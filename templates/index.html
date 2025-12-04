@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Моніторинг рослини ESP32</title>
+  <title>Моніторинг Т/В ESP32</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/luxon"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon"></script>
@@ -17,7 +17,7 @@
   </style>
 </head>
 <body>
-  <h1>Моніторинг рослини (ESP32)</h1>
+  <h1>Моніторинг Т/В (ESP32)</h1>
 
   <div class="last" id="last-update">Завантаження...</div>
 
@@ -59,7 +59,7 @@
               Останнє оновлення: ${new Date(last.timestamp).toLocaleString('uk-UA')}<br>
               Температура: <b>${last.temp.toFixed(1)}°C</b> 
               Вологість повітря: <b>${last.hum.toFixed(1)}%</b> 
-              Ґрунт: <b>${last.soil}</b> (чим менше — тим сухіше)
+              Вологість даху: <b>${last.soil}</b> (чим менше — тим сухіше)
             `;
           }
         });
