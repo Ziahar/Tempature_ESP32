@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Моніторинг рослини ESP32</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/luxon"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; background: #f4f4f4; }
+    h1 { text-align: center; }
+    .charts { display: grid; grid-template-columns: 1fr; gap: 20px; }
+    @media (min-width: 1000px) { .charts { grid-template-columns: 1fr 1fr; } }
+    canvas { background: white; border-radius: 10px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+    .last { text-align: center; font-size: 1.4em; margin: 20px; padding: 15px; background: white; border-radius: 10px; }
+  </style>
+</head>
+<body>
+  <h1>Моніторинг рослини (ESP32)</h1>
+
+  <div class="last" id="last-update">Завантаження...</div>
+
+  <div class="charts">
+    <div><canvas id="tempChart"></canvas></div>
+    <div><canvas id="humChart"></canvas></div>
+    <div><canvas id="soilChart"></canvas></div>
+  </div>
+
+  <script>
+    const ctxTemp = document.getElementById('tempChart').getContext('2d');
+    const ctxHum = document.getElementById('humChart').getContext('2d');
+    const ctxSoil = document.getElementById('soilChart').getContext('2d');
+
+    const tempChart = new Chart(ctxTemp, { type: 'line', data: {labels: [], datasets: [{label: 'Температура °C', data: [], borderColor: '#e74c3c', tension: 0.3}]}, options: {scales: {x: {type: 'time', time: {unit: 'hour'}}, y: {beginAtZero: false}}}});
+    const humChart  = new Chart(ctxHum,  { type: 'line', data: {labels: [], datasets: [{label: 'Вологість повітря %', data: [], borderColor: '#3498db', tension: 0.3}]}, options: {scales: {x: {type: 'time', time: {unit: 'hour'}}}}});
+    const soilChart = new Chart(ctxSoil, { type: 'line', data: {labels: [], datasets: [{label: 'Вологість ґрунту (raw 0-4095)', data: [], borderColor: '#2ecc71', tension: 0.3}]}, options: {scales: {x: {type: 'time', time: {unit: 'hour'}}, y: {suggestedMin: 0, suggestedMax: 4095}}}});
+
+    function updateCharts() {
+      fetch('/api/data?limit=1000')
+        .then(r => r.json())
+        .then(data => {
+          const times = data.map(d => new Date(d.timestamp));
+          tempChart.data.labels = times;
+          tempChart.data.datasets[0].data = data.map(d => d.temp);
+          tempChart.update('quiet');
+
+          humChart.data.labels = times;
+          humChart.data.datasets[0].data = data.map(d => d.hum);
+          humChart.update('quiet');
+
+          soilChart.data.labels = times;
+          soilChart.data.datasets[0].data = data.map(d => d.soil);
+          soilChart.update('quiet');
+
+          if (data.length > 0) {
+            const last = data[data.length - 1];
+            document.getElementById('last-update').innerHTML = `
+              Останнє оновлення: ${new Date(last.timestamp).toLocaleString('uk-UA')}<br>
+              Температура: <b>${last.temp.toFixed(1)}°C</b> 
+              Вологість повітря: <b>${last.hum.toFixed(1)}%</b> 
+              Ґрунт: <b>${last.soil}</b> (чим менше — тим сухіше)
+            `;
+          }
+        });
+    }
+
+    // Оновлюємо одразу і кожні 25 секунд
+    updateCharts();
+    setInterval(updateCharts, 25000);
+  </script>
+</body>
+</html>
