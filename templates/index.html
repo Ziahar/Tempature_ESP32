@@ -3,22 +3,22 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Моніторинг рослини ESP32</title>
+  <title>Моніторинг T/H/L ESP32</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/luxon@3"></script>
+  <script src="https://cdn.jsdelivr.net/npm/luxon"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon"></script>
   <style>
     body { font-family: Arial, sans-serif; margin: 20px; background: #f8f9fa; }
     h1 { text-align: center; color: #2c3e50; }
-    .charts { display: grid; grid-template-columns: 1fr; gap: 25px; margin-top: 20px; }
+    .charts { display: grid; grid-template-columns: 1fr; gap: 20px; max-width: 1200px; margin: 0 auto; }
     @media (min-width: 900px) { .charts { grid-template-columns: repeat(3, 1fr); } }
-    canvas { background: white; border-radius: 12px; padding: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
-    .last { text-align: center; font-size: 1.5em; padding: 20px; background: white; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); margin: 20px auto; max-width: 900px; }
+    canvas { background: white; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+    .last { text-align: center; font-size: 1.5em; margin: 30px; padding: 20px; background: white; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
   </style>
 </head>
 <body>
-  <h1>Моніторинг рослини (ESP32)</h1>
-  <div class="last" id="last-update">Завантаження...</div>
+  <h1>Моніторинг T/H/L ESP32</h1>
+  <div class="last" id="last-update">Завантаження даних...</div>
 
   <div class="charts">
     <div><canvas id="tempChart"></canvas></div>
@@ -27,99 +27,57 @@
   </div>
 
   <script>
-    // Примусово встановлюємо часовий пояс Київ (UTC+2 взимку, UTC+3 влітку)
-    const DateTime = luxon.DateTime;
-    Chart.defaults.plugins.tooltip.callbacks.label = function(context) {
-      let label = context.dataset.label || '';
-      if (label) label += ': ';
-      if (context.parsed.y !== null) {
-        if (context.chart.canvas.id === 'tempChart')      return label + context.parsed.y.toFixed(1) + ' °C';
-        if (context.chart.canvas.id === 'humChart')       return label + context.parsed.y.toFixed(2) + ' %';
-        if (context.chart.canvas.id === 'lightChart')     return label + context.parsed.y.toFixed(2);
-      }
-      return label;
-    };
-
-    function getYAxisConfig(values) {
-      if (values.length === 0) return {};
-      const min = Math.min(...values);
-      const max = Math.max(...values);
-      const padding = (max - min) * 0.1 || 10;
-      return {
-        suggestedMin: Math.floor(min - padding),
-        suggestedMax: Math.ceil(max + padding)
-      };
-    }
-
-    const commonOptions = {
+    const tempChart = new Chart(document.getElementById('tempChart'), {
       type: 'line',
-      options: {
-        responsive: true,
-        interaction: { mode: 'index', intersect: false },
-        scales: {
-          x: {
-            type: 'time',
-            time: { unit: 'hour', tooltipFormat: 'dd MMM HH:mm' },
-            adapters: { date: { zone: 'Europe/Kiev' }}, // головне виправлення
-            ticks: { source: 'auto', maxRotation: 0 }
-          },
-          y: { }
-        },
-        plugins: {
-          legend: { labels: { font: { size: 15 }}},
-          tooltip: { mode: 'index' }
-        }
-      },
-      data: { datasets: [{ tension: 0.4, fill: false, pointRadius: 2 }] }
-    };
+      data: { datasets: [{ label: 'Температура °C', borderColor: '#e74c3c', backgroundColor: 'rgba(231,76,60,0.2)', tension: 0.3, fill: true }] },
+      options: { scales: { x: { type: 'time', time: { unit: 'hour' } } } }
+    });
 
-    const tempChart  = new Chart('tempChart',  { ...commonOptions, data: { datasets: [{ label: 'Температура °C',  borderColor: '#e74c3c' }]}});
-    const humChart   = new Chart('humChart',   { ...commonOptions, data: { datasets: [{ label: 'Вологість повітря %', borderColor: '#3498db' }]}});
-    const lightChart = new Chart('lightChart', { ...commonOptions, data: { datasets: [{ label: 'Освітленість',        borderColor: '#f1c40f' }]}});
+    const humChart = new Chart(document.getElementById('humChart'), {
+      type: 'line',
+      data: { datasets: [{ label: 'Вологість повітря %', borderColor: '#3498db', backgroundColor: 'rgba(52,152,219,0.2)', tension: 0.3, fill: true }] },
+      options: { scales: { x: { type: 'time', time: { unit: 'hour' } }, y: { min: 0, max: 100 } } }
+    });
 
-    function updateCharts() {
-      fetch('/api/data?limit=2000')
+    const lightChart = new Chart(document.getElementById('lightChart'), {
+      type: 'line',
+      data: { datasets: [{ label: 'Освітленість (0-4095)', borderColor: '#f1c40f', backgroundColor: 'rgba(241,196,15,0.3)', tension: 0.3, fill: true }] },
+      options: { scales: { x: { type: 'time', time: { unit: 'hour' } }, y: { suggestedMin: 0, suggestedMax: 4095 } } }
+    });
+
+    function update() {
+      fetch('/api/data?limit=1000')
         .then(r => r.json())
         .then(data => {
-          if (data.length === 0) return;
+          const labels = data.map(d => new Date(d.timestamp));
 
-          const labels = data.map(d => d.timestamp);
-          const temps  = data.map(d => d.temp);
-          const hums   = data.map(d => d.hum);
-          const lights = data.map(d => d.soil);
-
-          // Оновлюємо дані
-          tempChart.data.labels = labels;   tempChart.data.datasets[0].data = temps;
-          humChart.data.labels  = labels;   humChart.data.datasets[0].data  = hums;
-          lightChart.data.labels = labels;  lightChart.data.datasets[0].data = lights;
-
-          // Автомасштаб по Y
-          tempChart.options.scales.y  = getYAxisConfig(temps);
-          humChart.options.scales.y   = getYAxisConfig(hums);
-          lightChart.options.scales.y = getYAxisConfig(lights);
-
+          tempChart.data.labels = labels;
+          tempChart.data.datasets[0].data = data.map(d => d.temp);
           tempChart.update('quiet');
+
+          humChart.data.labels = labels;
+          humChart.data.datasets[0].data = data.map(d => d.hum);
           humChart.update('quiet');
+
+          lightChart.data.labels = labels;
+          lightChart.data.datasets[0].data = data.map(d => d.soil);  // тут у нас освітленість!
           lightChart.update('quiet');
 
-          // Останнє оновлення — теж київський час
-          const last = data[data.length-1];
-          const dt = DateTime.fromISO(last.timestamp, { zone: 'utc' }).setZone('Europe/Kiev');
-          const lightText = last.soil < 300 ? "дуже темно" :
-                           last.soil < 1000 ? "тінь" :
-                           last.soil < 2500 ? "нормальне світло" : "дуже яскраво";
-
-          document.getElementById('last-update').innerHTML = `
-            Останнє оновлення: <b>${dt.toFormat('dd.MM.yyyy HH:mm:ss')}</b> (Київ)<br><br>
-            Температура: <b>${last.temp.toFixed(1)} °C</b><br>
-            Вологість повітря: <b>${last.hum.toFixed(2)} %</b><br>
-            Освітленість: <b>${last.soil.toFixed(2)}</b> → ${lightText}
-          `;
+          if (data.length > 0) {
+            const last = data[data.length-1];
+            const lightPerc = Math.round((1 - last.soil / 4095) * 100); // чим менше значення — тим світліше
+            document.getElementById('last-update').innerHTML = `
+              Останнє оновлення: <b>${new Date(last.timestamp).toLocaleString('uk-UA')}</b><br><br>
+              Температура: <b>${last.temp.toFixed(1)} °C</b>  | 
+              Вологість повітря: <b>${last.hum.toFixed(1)} %</b>  | 
+              Освітленість: <b>${last.soil}</b> (~${lightPerc}% світла)
+            `;
+          }
         });
     }
 
-    updateCharts();
-    setInterval(updateCharts, 25000);
+    update();
+    setInterval(update, 25000);
   </script>
 </body>
 </html>
