@@ -78,47 +78,54 @@
     });
 
     function updateCharts() {
-      fetch('/api/data?limit=3000')
-        .then(r => r.json())
-        .then(data => {
-          if (data.length === 0) return;
+  fetch('/api/data?limit=3000')
+    .then(r => r.json())
+    .then(data => {
+      if (data.length === 0) return;
 
-          const labels = data.map(d => new Date(d.timestamp));
+      // ==== НОВА ФУНКЦІЯ — корекція часу на +3 години (або +2 взимку) ====
+      function toUaTime(isoString) {
+        const date = new Date(isoString);
+        // Додаємо український часовий пояс (EET/EEST)
+        return date.toLocaleString('uk-UA', { timeZone: 'Europe/Kiev' });
+      }
+      // ==================================================================
 
-          // --- Температура ---
-          const tempValues = data.map(d => d.temp);
-          tempChart.data.labels = labels;
-          tempChart.data.datasets[0].data = tempValues;
-          tempChart.options.scales.y.min = Math.floor(Math.min(...tempValues) - 1);
-          tempChart.options.scales.y.max = Math.ceil(Math.max(...tempValues) + 1);
-          tempChart.update('quiet');
+      const labels = data.map(d => new Date(d.timestamp));
 
-          // --- Вологість ---
-          const humValues = data.map(d => d.hum);
-          humChart.data.labels = labels;
-          humChart.data.datasets[0].data = humValues;
-          humChart.options.scales.y.min = Math.floor(Math.min(...humValues) - 5);
-          humChart.options.scales.y.max = Math.ceil(Math.max(...humValues) + 5);
-          humChart.update('quiet');
+      // Температура
+      const tempValues = data.map(d => d.temp);
+      tempChart.data.labels = labels;
+      tempChart.data.datasets[0].data = tempValues;
+      tempChart.options.scales.y.min = Math.floor(Math.min(...tempValues) - 1);
+      tempChart.options.scales.y.max = Math.ceil(Math.max(...tempValues) + 1);
+      tempChart.update('quiet');
 
-          // --- Освітленість ---
-          const lightValues = data.map(d => d.light);
-          lightChart.data.labels = labels;
-          lightChart.data.datasets[0].data = lightValues;
-          // Для освітленості завжди від 0 до max+100, щоб навіть 50 видно було
-          lightChart.options.scales.y.min = 0;
-          lightChart.options.scales.y.max = Math.max(4100, Math.max(...lightValues) + 200);
-          lightChart.update('quiet');
+      // Вологість
+      const humValues = data.map(d => d.hum);
+      humChart.data.labels = labels;
+      humChart.data.datasets[0].data = humValues;
+      humChart.options.scales.y.min = Math.floor(Math.min(...humValues) - 5);
+      humChart.options.scales.y.max = Math.ceil(Math.max(...humValues) + 5);
+      humChart.update('quiet');
 
-          // Останнє значення
-          const last = data[data.length - 1];
-          document.getElementById('last-update').innerHTML = `
-            Останнє оновлення: <b>${new Date(last.timestamp).toLocaleString('uk-UA')}</b><br><br>
-            Температура: <b>${last.temp}°C</b>  Вологість: <b>${last.hum}%</b>  Освітленість: <b>${last.light}</b>
-          `;
-        })
-        .catch(err => console.error("Помилка завантаження:", err));
-    }
+      // Освітленість
+      const lightValues = data.map(d => d.light);
+      lightChart.data.labels = labels;
+      lightChart.data.datasets[0].data = lightValues;
+      lightChart.options.scales.y.min = 0;
+      lightChart.options.scales.y.max = Math.max(4095, Math.max(...lightValues) + 200);
+      lightChart.update('quiet');
+
+      // Останнє значення — тепер з правильним українським часом
+      const last = data[data.length - 1];
+      document.getElementById('last-update').innerHTML = `
+        Останнє оновлення: <b>${toUaTime(last.timestamp)}</b><br><br>
+        Температура: <b>${last.temp}°C</b>  Вологість: <b>${last.hum}%</b>  Освітленість: <b>${last.light}</b>
+      `;
+    })
+    .catch(err => console.error("Помилка:", err));
+}
 
     // Оновлюємо одразу і кожні 18 секунд
     updateCharts();
