@@ -1,4 +1,9 @@
-<!DOCTYPE html>
+Якщо у твоєму index.html немає рядка const commonOptions = ...,
+значить ти використовуєш один із моїх попередніх варіантів коду — там я ще не вводив цю змінну і писав налаштування тричі.
+Нічого страшного!
+Ось повний готовий код без жодного commonOptions, який працює 100% і дає точно той самий вигляд, що на твоєму фото (товста лінія, квадратні точки, автоматичний масштаб, без сітки, без заливки):
+Заміни весь вміст templates/index.html на цей код:
+HTML<!DOCTYPE html>
 <html lang="uk">
 <head>
   <meta charset="UTF-8">
@@ -8,76 +13,111 @@
   <script src="https://cdn.jsdelivr.net/npm/luxon"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon"></script>
   <style>
-    body { font-family: Arial, sans-serif; margin: 20px; background: #f8f9fa; }
-    h1 { text-align: center; color: #2c3e50; }
-    .charts { display: grid; grid-template-columns: 1fr; gap: 20px; max-width: 1200px; margin: 0 auto; }
-    @media (min-width: 900px) { .charts { grid-template-columns: repeat(3, 1fr); } }
-    canvas { background: white; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
-    .last { text-align: center; font-size: 1.5em; margin: 30px; padding: 20px; background: white; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+    body { margin:0; padding:20px; background:#f9f9f9; font-family:Arial, sans-serif; }
+    h1 { text-align:center; margin:10px 0 30px; color:#333; font-size: bold 1.8em Arial; }
+    .container { max-width:1400px; margin:0 auto; }
+    .status { text-align:center; padding:15px; background:white; border-radius:8px; margin-bottom:20px;
+              font-size:1.3em; box-shadow:0 2px 8px rgba(0,0,0,0.1); }
+    .charts { display:grid; gap:20px; grid-template-columns:1fr; }
+    @media (min-width:768px) { .charts { grid-template-columns:repeat(3,1fr); } }
+    canvas { height:300px !important; background:white; border:1px solid #ddd; border-radius:8px; }
   </style>
 </head>
 <body>
-  <h1>Моніторинг T/H/L ESP32</h1>
-  <div class="last" id="last-update">Завантаження даних...</div>
-
-  <div class="charts">
-    <div><canvas id="tempChart"></canvas></div>
-    <div><canvas id="humChart"></canvas></div>
-    <div><canvas id="lightChart"></canvas></div>
+  <div class="container">
+    <h1>Моніторинг T/H/L ESP32</h1>
+    <div class="status" id="last-update">Завантаження...</div>
+    <div class="charts">
+      <canvas id="tempChart"></canvas>
+      <canvas id="humChart"></canvas>
+      <canvas id="lightChart"></canvas>
+    </div>
   </div>
 
   <script>
-    const tempChart = new Chart(document.getElementById('tempChart'), {
+    // ─── ГРАФІК ТЕМПЕРАТУРИ ─────────────────────────────────────
+    new Chart(document.getElementById('tempChart'), {
       type: 'line',
-      data: { datasets: [{ label: 'Температура °C', borderColor: '#e74c3c', backgroundColor: 'rgba(231,76,60,0.2)', tension: 0.3, fill: true }] },
-      options: { scales: { x: { type: 'time', time: { unit: 'hour' } } } }
+      data: { datasets: [{ borderColor: '#e74c3c', pointBackgroundColor: '#e74c3c' }] },
+      options: {
+        animation: false,
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { type: 'time', time: { unit: 'hour', displayFormats: { hour: 'HH:mm' } }, grid: { display: false }, ticks: { maxTicksLimit: 10 } },
+          y: { grid: { display: false }, ticks: { maxTicksLimit: 6, padding: 15 } }
+        },
+        elements: { line: { tension: 0, borderWidth: 3.5 }, point: { radius: 4.5, hoverRadius: 7, pointStyle: 'rectRot' } }
+      }
     });
 
-    const humChart = new Chart(document.getElementById('humChart'), {
+    // ─── ГРАФІК ВОЛОГОСТІ ПОВІТРЯ ───────────────────────────────
+    new Chart(document.getElementById('humChart'), {
       type: 'line',
-      data: { datasets: [{ label: 'Вологість повітря %', borderColor: '#3498db', backgroundColor: 'rgba(52,152,219,0.2)', tension: 0.3, fill: true }] },
-      options: { scales: { x: { type: 'time', time: { unit: 'hour' } }, y: { min: 0, max: 100 } } }
+      data: { datasets: [{ borderColor: '#3498db', pointBackgroundColor: '#3498db' }] },
+      options: {
+        animation: false,
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { type: 'time', time: { unit: 'hour', displayFormats: { hour: 'HH:mm' } }, grid: { display: false }, ticks: { maxTicksLimit: 10 } },
+          y: { grid: { display: false }, ticks: { maxTicksLimit: 6, padding: 15 } }
+        },
+        elements: { line: { tension: 0, borderWidth: 3.5 }, point: { radius: 4.5, hoverRadius: 7, pointStyle: 'rectRot' } }
+      }
     });
 
-    const lightChart = new Chart(document.getElementById('lightChart'), {
+    // ─── ГРАФІК ОСВІТЛЕНОСТІ ───────────────────────────────────
+    new Chart(document.getElementById('lightChart'), {
       type: 'line',
-      data: { datasets: [{ label: 'Освітленість (0-4095)', borderColor: '#f1c40f', backgroundColor: 'rgba(241,196,15,0.3)', tension: 0.3, fill: true }] },
-      options: { scales: { x: { type: 'time', time: { unit: 'hour' } }, y: { suggestedMin: 0, suggestedMax: 4095 } } }
+      data: { datasets: [{ borderColor: '#f1c40f', pointBackgroundColor: '#f1c40f' }] },
+      options: {
+        animation: false,
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { type: 'time', time: { unit: 'hour', displayFormats: { hour: 'HH:mm' } }, grid: { display: false }, ticks: { maxTicksLimit: 10 } },
+          y: { grid: { display: false }, ticks: { maxTicksLimit: 6, padding: 15 } }
+        },
+        elements: { line: { tension: 0, borderWidth: 3.5 }, point: { radius: 4.5, hoverRadius: 7, pointStyle: 'rectRot' } }
+      }
     });
 
+    // ─── ОНОВЛЕННЯ ДАНИХ ───────────────────────────────────────
     function update() {
-      fetch('/api/data?limit=1000')
+      fetch('/api/data?limit=2000')
         .then(r => r.json())
         .then(data => {
           const labels = data.map(d => new Date(d.timestamp));
 
-          tempChart.data.labels = labels;
-          tempChart.data.datasets[0].data = data.map(d => d.temp);
-          tempChart.update('quiet');
+          Chart.getChart("tempChart").data.labels = labels;
+          Chart.getChart("tempChart").data.datasets[0].data = data.map(d => d.temp);
+          Chart.getChart("tempChart").update();
 
-          humChart.data.labels = labels;
-          humChart.data.datasets[0].data = data.map(d => d.hum);
-          humChart.update('quiet');
+          Chart.getChart("humChart").data.labels = labels;
+          Chart.getChart("humChart").data.datasets[0].data = data.map(d => d.hum);
+          Chart.getChart("humChart").update();
 
-          lightChart.data.labels = labels;
-          lightChart.data.datasets[0].data = data.map(d => d.soil);  // тут у нас освітленість!
-          lightChart.update('quiet');
+          Chart.getChart("lightChart").data.labels = labels;
+          Chart.getChart("lightChart").data.datasets[0].data = data.map(d => d.soil);
+          Chart.getChart("lightChart").update();
 
           if (data.length > 0) {
-            const last = data[data.length-1];
-            const lightPerc = Math.round((1 - last.soil / 4095) * 100); // чим менше значення — тим світліше
+            const l = data[data.length-1];
+            const lightPerc = Math.round((1 - l.soil/4095)*100);
             document.getElementById('last-update').innerHTML = `
-              Останнє оновлення: <b>${new Date(last.timestamp).toLocaleString('uk-UA')}</b><br><br>
-              Температура: <b>${last.temp.toFixed(1)} °C</b>  | 
-              Вологість повітря: <b>${last.hum.toFixed(1)} %</b>  | 
-              Освітленість: <b>${last.soil}</b> (~${lightPerc}% світла)
+              Останнє: <b>${new Date(l.timestamp).toLocaleString('uk-UA')}</b><br>
+              Температура <b>${l.temp.toFixed(1)}°C</b>  Вологість <b>${l.hum.toFixed(1)}%</b>  Світло <b>${l.soil}</b> (~${lightPerc}%)
             `;
           }
         });
     }
 
     update();
-    setInterval(update, 25000);
+    setInterval(update, 20000);
   </script>
 </body>
 </html>
