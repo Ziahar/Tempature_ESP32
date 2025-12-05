@@ -3,23 +3,21 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Моніторинг ESP32 – Температура • Вологість • Освітленість</title>
+  <title>Моніторинг рослини ESP32</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/luxon"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon"></script>
   <style>
-    body { font-family: 'Segoe UI', sans-serif; margin: 20px; background: #f8f9fa; }
+    body { font-family: Arial, sans-serif; margin: 20px; background: #f8f9fa; }
     h1 { text-align: center; color: #2c3e50; }
-    .last { text-align: center; font-size: 1.5em; padding: 20px; background: white; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); margin-bottom: 20px; }
-    .charts { display: grid; gap: 20px; grid-template-columns: 1fr; }
-    @media (min-width: 900px) { .charts { grid-template-columns: 1fr 1fr; } }
-    @media (min-width: 1300px) { .charts { grid-template-columns: repeat(3, 1fr); } }
+    .last { text-align: center; font-size: 1.5em; margin: 20px; padding: 20px; background: white; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+    .charts { display: grid; grid-template-columns: 1fr; gap: 20px; margin-top: 20px; }
+    @media (min-width: 1000px) { .charts { grid-template-columns: repeat(3, 1fr); } }
     canvas { background: white; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
   </style>
 </head>
 <body>
-  <h1>Моніторинг ESP32 – Температура • Вологість • Освітленість</h1>
-
+  <h1>Моніторинг рослини (ESP32)</h1>
   <div class="last" id="last-update">Завантаження даних...</div>
 
   <div class="charts">
@@ -29,78 +27,55 @@
   </div>
 
   <script>
-    // Конвертація raw → відсотки
-    const rawToPercent = (raw => Math.round((raw / 4095) * 100);
-
     const tempChart = new Chart(document.getElementById('tempChart'), {
       type: 'line',
-      data: { datasets: [{ label: 'Температура °C', borderColor: '#e74c3c', backgroundColor: 'rgba(231,76,60,0.1)', tension: 0.4, fill: true }] },
-      options: { animation: false, scales: { x: { type: 'time', time: { unit: 'hour', displayFormats: { hour: 'HH:mm' }}}, y: { title: { display: true, text: '°C' }, ticks: { stepSize: 0.2 }}} }
+      data: { datasets: [{ label: 'Температура °C', borderColor: '#e74c3c', tension: 0.3, pointRadius: 3 }] },
+      options: { scales: { y: { min: 15, max: 35, ticks: { stepSize: 0.5 } }, x: { type: 'time', time: { unit: 'minute' } } }, plugins: { legend: { display: true } } }
     });
 
     const humChart = new Chart(document.getElementById('humChart'), {
       type: 'line',
-      data: { datasets: [{ label: 'Вологість повітря %', borderColor: '#3498db', backgroundColor: 'rgba(52,152,219,0.1)', tension: 0.4, fill: true }] },
-      options: { animation: false, scales: { x: { type: 'time', time: { unit: 'hour' }}, y: { title: { display: true, text: '%' }, ticks: { stepSize: 0.5 }, suggestedMin: 20, suggestedMax: 90 }} }
+      data: { datasets: [{ label: 'Вологість повітря %', borderColor: '#3498db', tension: 0.3, pointRadius: 3 }] },
+      options: { scales: { y: { min: 30, max: 80, ticks: { stepSize: 2 } }, x: { type: 'time', time: { unit: 'minute' } } } }
     });
 
     const lightChart = new Chart(document.getElementById('lightChart'), {
       type: 'line',
-      data: { datasets: [
-        { label: 'Освітленість (raw)', borderColor: '#f39c12', backgroundColor: 'rgba(243,156,18,0.1)', tension: 0.4, fill: true, yAxisID: 'y' },
-        { label: 'Освітленість %', borderColor: '#e67e22', tension: 0.4, yAxisID: 'y1' }
-      ]},
-      options: {
-        animation: false,
-        scales: {
-          x: { type: 'time', time: { unit: 'hour', displayFormats: { hour: 'HH:mm' }}},
-          y: { position: 'left', title: { display: true, text: 'Raw (0–4095)' }, ticks: { stepSize: 200 }, suggestedMin: 0, suggestedMax:4095 },
-          y1: { position: 'right', title: { display: true, text: 'Відсотки %' }, min: 0, max: 100, grid: { drawOnChartArea: false }}
-        }
-      }
+      data: { datasets: [{ label: 'Освітленість (0-4095)', borderColor: '#f1c40f', tension: 0.3, pointRadius: 3 }] },
+      options: { scales: { y: { min: 200, max: 4095, ticks: { stepSize: 100 } }, x: { type: 'time', time: { unit: 'minute' } } } }
     });
 
-    function updateCharts() {
+    function update() {
       fetch('/api/data?limit=2000')
         .then(r => r.json())
         .then(data => {
-          const times = data.map(d => d.timestamp);
+          const labels = data.map(d => new Date(d.timestamp));
 
-          // Температура
-          tempChart.data.labels = times;
-          tempChart.data.datasets[0].data = data.map(d => ({ x: d.timestamp, y: d.temp }));
-
-          // Вологість
-          humChart.data.labels = times;
-          humChart.data.datasets[0].data = data.map(d => ({ x: d.timestamp, y: d.hum }));
-
-          // Освітленість – два графіки в одному
-          lightChart.data.labels = times;
-          lightChart.data.datasets[0].data = data.map(d => ({ x: d.timestamp, y: d.soil }));                    // raw
-          lightChart.data.datasets[1].data = data.map(d => ({ x: d.timestamp, y: rawToPercent(d.soil) }));     // %
-
+          tempChart.data.labels = labels;
+          tempChart.data.datasets[0].data = data.map(d => d.temp);
           tempChart.update('quiet');
+
+          humChart.data.labels = labels;
+          humChart.data.datasets[0].data = data.map(d => d.hum);
           humChart.update('quiet');
+
+          lightChart.data.labels = labels;
+          lightChart.data.datasets[0].data = data.map(d => d.light);
           lightChart.update('quiet');
 
-          // Останні значення
           if (data.length > 0) {
-            const l = data[data.length-1];
-            const lightPerc = rawToPercent(l.soil);
+            const last = data[data.length - 1];
             document.getElementById('last-update').innerHTML = `
-              Останнє оновлення: <b>${new Date(l.timestamp).toLocaleString('uk-UA')}</b><br><br>
-              Температура: <b>${l.temp.toFixed(1)} °C</b>  •  
-              Вологість повітря: <b>${l.hum.toFixed(1)} %</b><br>
-              Освітленість: <b>${l.soil}</b> (raw) → <b>${lightPerc} %</b>
-              ${lightPerc < 10 ? '(дуже темно)' : lightPerc < 30 ? '(тінь)' : lightPerc < 70 ? '(нормально)' : '(дуже світло)'}
+              Останнє оновлення: <b>${new Date(last.timestamp).toLocaleString('uk-UA')}</b><br><br>
+              Температура: <b>${last.temp}°C</b>  Вологість: <b>${last.hum}%</b>  Освітленість: <b>${last.light}</b>
             `;
           }
         })
         .catch(err => console.error(err));
     }
 
-    updateCharts();
-    setInterval(updateCharts, 20000);
+    update();
+    setInterval(update, 20000);  // кожні 20 секунд
   </script>
 </body>
 </html>
