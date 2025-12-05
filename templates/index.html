@@ -16,7 +16,7 @@
     .last {
       text-align: center; font-size: 1.5em; padding: 20px; background: white;
       border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); margin: 20px auto;
-      max-width: 800px;
+      max-width: 900px;
     }
     .label { font-weight: bold; color: #2c3e50; }
   </style>
@@ -33,28 +33,88 @@
   </div>
 
   <script>
+    // Температура
     const tempChart = new Chart(document.getElementById('tempChart'), {
       type: 'line',
-      data: { datasets: [{ label: 'Температура °C', borderColor: '#e74c3c', backgroundColor: '#e74c3c33', tension: 0.3 }] },
-      options: { scales: { x: { type: 'time', time: { unit: 'hour' }}, y: { beginAtZero: false }}}
-    });
-
-    const humChart = new Chart(document.getElementById('humChart'), {
-      type: 'line',
-      data: { datasets: [{ label: 'Вологість повітря %', borderColor: '#3498db', backgroundColor: '#3498db33', tension: 0.3 }] },
-      options: { scales: { x: { type: 'time', time: { unit: 'hour' }}, y: { suggestedMin: 0, suggestedMax: 100 }}}
-    });
-
-    const lightChart = new Chart(document.getElementById('lightChart'), {
-      type: 'line',
-      data: { datasets: [{ label: 'Освітленість', borderColor: '#f9ca24', backgroundColor: '#f9ca2433', tension: 0.3 }] },
+      data: { datasets: [{
+        label: 'Температура °C',
+        borderColor: '#e74c3c',
+        backgroundColor: '#e74c3c33',
+        tension: 0.3,
+        borderWidth: 3,
+        pointRadius: 3,
+        pointHoverRadius: 6
+      }]},
       options: {
         scales: {
-          x: { type: 'time', time: { unit: 'hour' }},
-          y: { suggestedMin: 0, suggestedMax: 4095, ticks: { stepSize: 500 }}
+          x: { type: 'time', time: { unit: 'hour' } },
+          y: { beginAtZero: false }
+        }
+      }
+    });
+
+    // ВОЛОГІСТЬ — ТЕПЕР ДУЖЕ ЧУТЛИВА!
+    const humChart = new Chart(document.getElementById('humChart'), {
+      type: 'line',
+      data: { datasets: [{
+        label: 'Вологість повітря %',
+        borderColor: '#3498db',
+        backgroundColor: '#3498db44',
+        tension: 0.2,
+        borderWidth: 4,              // товста лінія
+        pointRadius: 4,              // кожна точка видно
+        pointHoverRadius: 8,
+        pointBackgroundColor: '#3498db',
+        pointBorderColor: '#fff',
+        pointBorderWidth: 2,
+        fill: true
+      }] },
+      options: {
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          tooltip: {
+            callbacks: {
+              label: ctx => ` ${ctx.parsed.y.toFixed(1)} %`
+            }
+          }
+        },
+        scales: {
+          x: { type: 'time', time: { unit: 'minute', displayFormats: { minute: 'HH:mm' } } },
+          y: {
+            suggestedMin: 20,
+            suggestedMax: 90,
+            ticks: { stepSize: 1 },                 // крок 1%
+            grid: { color: 'rgba(0,0,0,0.05)' },
+            title: { display: true, text: 'Вологість, %' }
+          }
+        },
+        animation: false,  // щоб не згладжувало різкі зміни
+      }
+    });
+
+    // Освітленість (ґрунт як датчик світла)
+    const lightChart = new Chart(document.getElementById('lightChart'), {
+      type: 'line',
+      data: { datasets: [{
+        label: 'Освітленість (0–4095)',
+        borderColor: '#f9ca24',
+        backgroundColor: '#f9ca2444',
+        tension: 0.3,
+        borderWidth: 3,
+        pointRadius: 3,
+        fill: true
+      }] },
+      options: {
+        scales: {
+          x: { type: 'time', time: { unit: 'hour' } },
+          y: { suggestedMin: 0, suggestedMax: 4095, ticks: { stepSize: 500 } }
         },
         plugins: {
-          tooltip: { callbacks: { afterLabel: () => '0 = темно • 4095 = дуже яскраво' }}
+          tooltip: {
+            callbacks: {
+              afterLabel: ctx => '0 = темно • 4095 = дуже яскраво'
+            }
+          }
         }
       }
     });
@@ -65,40 +125,41 @@
         .then(data => {
           const labels = data.map(d => d.timestamp);
 
-          tempChart.data.labels = labels;
+          // Оновлюємо всі графіки
+          [tempChart, humChart, lightChart].forEach(chart => {
+            chart.data.labels = labels;
+          });
+
           tempChart.data.datasets[0].data = data.map(d => d.temp);
-          tempChart.update('quiet');
-
-          humChart.data.labels = labels;
           humChart.data.datasets[0].data = data.map(d => d.hum);
-          humChart.update('quiet');
+          lightChart.data.datasets[0].data = data.map(d => d.soil);
 
-          lightChart.data.labels = labels;
-          lightChart.data.datasets[0].data = data.map(d => d.soil); // у базі це поле "soil"
+          tempChart.update('quiet');
+          humChart.update('quiet');
           lightChart.update('quiet');
 
+          // Останні значення
           if (data.length > 0) {
-            const last = data[data.length-1];
-            const lightLevel = last.soil;
-            let lightText = "";
-            if (lightLevel < 300) lightText = "🌙 дуже темно";
-            else if (lightLevel < 1000) lightText = "тінь / вечір";
-            else if (lightLevel < 2500) lightText = "нормальне світло";
-            else lightText = "яскраве / сонце";
+            const last = data[data.length - 1];
+            const light = last.soil;
+            let lightText = light < 300 ? "дуже темно" :
+                           light < 1000 ? "тінь / вечір" :
+                           light < 2500 ? "нормальне світло" : "яскраве / сонце";
 
             document.getElementById('last-update').innerHTML = `
-              <span class="label">Останнє оновлення:</span> ${new Date(last.timestamp).toLocaleString('uk-UA')}<br><br>
+              <span class="label">Останнє:</span> ${new Date(last.timestamp).toLocaleString('uk-UA')}<br><br>
               Температура: <b>${last.temp.toFixed(1)} °C</b>  |
-              Вологість повітря: <b>${last.hum.toFixed(1)} %</b>  |
-              Освітленість: <b>${lightLevel}</b> → ${lightText}
+              Вологість: <b>${last.hum.toFixed(1)} %</b>  |
+              Світло: <b>${light}</b> → ${lightText}
             `;
           }
         })
-        .catch(err => console.error(err));
+        .catch(err => console.error("Помилка завантаження:", err));
     }
 
+    // Оновлення кожні 20 секунд (можна 15)
     updateCharts();
-    setInterval(updateCharts, 25000);
+    setInterval(updateCharts, 20000);
   </script>
 </body>
 </html>
