@@ -3,116 +3,104 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Моніторинг T/H/L ESP32</title>
+  <title>Моніторинг ESP32 – Температура • Вологість • Освітленість</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/luxon"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon"></script>
   <style>
-    body { margin:0; padding:20px; background:#f9f9f9; font-family:Arial, sans-serif; }
-    h1 { text-align:center; margin:10px 0 30px; color:#333; font-size: bold 1.8em Arial; }
-    .container { max-width:1400px; margin:0 auto; }
-    .status { text-align:center; padding:15px; background:white; border-radius:8px; margin-bottom:20px;
-              font-size:1.3em; box-shadow:0 2px 8px rgba(0,0,0,0.1); }
-    .charts { display:grid; gap:20px; grid-template-columns:1fr; }
-    @media (min-width:768px) { .charts { grid-template-columns:repeat(3,1fr); } }
-    canvas { height:300px !important; background:white; border:1px solid #ddd; border-radius:8px; }
+    body { font-family: 'Segoe UI', sans-serif; margin: 20px; background: #f8f9fa; }
+    h1 { text-align: center; color: #2c3e50; }
+    .last { text-align: center; font-size: 1.5em; padding: 20px; background: white; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); margin-bottom: 20px; }
+    .charts { display: grid; gap: 20px; grid-template-columns: 1fr; }
+    @media (min-width: 900px) { .charts { grid-template-columns: 1fr 1fr; } }
+    @media (min-width: 1300px) { .charts { grid-template-columns: repeat(3, 1fr); } }
+    canvas { background: white; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
   </style>
 </head>
 <body>
-  <div class="container">
-    <h1>Моніторинг T/H/L ESP32</h1>
-    <div class="status" id="last-update">Завантаження...</div>
-    <div class="charts">
-      <canvas id="tempChart"></canvas>
-      <canvas id="humChart"></canvas>
-      <canvas id="lightChart"></canvas>
-    </div>
+  <h1>Моніторинг ESP32 – Температура • Вологість • Освітленість</h1>
+
+  <div class="last" id="last-update">Завантаження даних...</div>
+
+  <div class="charts">
+    <div><canvas id="tempChart"></canvas></div>
+    <div><canvas id="humChart"></canvas></div>
+    <div><canvas id="lightChart"></canvas></div>
   </div>
 
   <script>
-    // ─── ГРАФІК ТЕМПЕРАТУРИ ─────────────────────────────────────
-    new Chart(document.getElementById('tempChart'), {
+    // Конвертація raw → відсотки
+    const rawToPercent = (raw => Math.round((raw / 4095) * 100);
+
+    const tempChart = new Chart(document.getElementById('tempChart'), {
       type: 'line',
-      data: { datasets: [{ borderColor: '#e74c3c', pointBackgroundColor: '#e74c3c' }] },
+      data: { datasets: [{ label: 'Температура °C', borderColor: '#e74c3c', backgroundColor: 'rgba(231,76,60,0.1)', tension: 0.4, fill: true }] },
+      options: { animation: false, scales: { x: { type: 'time', time: { unit: 'hour', displayFormats: { hour: 'HH:mm' }}}, y: { title: { display: true, text: '°C' }, ticks: { stepSize: 0.2 }}} }
+    });
+
+    const humChart = new Chart(document.getElementById('humChart'), {
+      type: 'line',
+      data: { datasets: [{ label: 'Вологість повітря %', borderColor: '#3498db', backgroundColor: 'rgba(52,152,219,0.1)', tension: 0.4, fill: true }] },
+      options: { animation: false, scales: { x: { type: 'time', time: { unit: 'hour' }}, y: { title: { display: true, text: '%' }, ticks: { stepSize: 0.5 }, suggestedMin: 20, suggestedMax: 90 }} }
+    });
+
+    const lightChart = new Chart(document.getElementById('lightChart'), {
+      type: 'line',
+      data: { datasets: [
+        { label: 'Освітленість (raw)', borderColor: '#f39c12', backgroundColor: 'rgba(243,156,18,0.1)', tension: 0.4, fill: true, yAxisID: 'y' },
+        { label: 'Освітленість %', borderColor: '#e67e22', tension: 0.4, yAxisID: 'y1' }
+      ]},
       options: {
         animation: false,
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: { legend: { display: false } },
         scales: {
-          x: { type: 'time', time: { unit: 'hour', displayFormats: { hour: 'HH:mm' } }, grid: { display: false }, ticks: { maxTicksLimit: 10 } },
-          y: { grid: { display: false }, ticks: { maxTicksLimit: 6, padding: 15 } }
-        },
-        elements: { line: { tension: 0, borderWidth: 3.5 }, point: { radius: 4.5, hoverRadius: 7, pointStyle: 'rectRot' } }
+          x: { type: 'time', time: { unit: 'hour', displayFormats: { hour: 'HH:mm' }}},
+          y: { position: 'left', title: { display: true, text: 'Raw (0–4095)' }, ticks: { stepSize: 200 }, suggestedMin: 0, suggestedMax:4095 },
+          y1: { position: 'right', title: { display: true, text: 'Відсотки %' }, min: 0, max: 100, grid: { drawOnChartArea: false }}
+        }
       }
     });
 
-    // ─── ГРАФІК ВОЛОГОСТІ ПОВІТРЯ ───────────────────────────────
-    new Chart(document.getElementById('humChart'), {
-      type: 'line',
-      data: { datasets: [{ borderColor: '#3498db', pointBackgroundColor: '#3498db' }] },
-      options: {
-        animation: false,
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: { legend: { display: false } },
-        scales: {
-          x: { type: 'time', time: { unit: 'hour', displayFormats: { hour: 'HH:mm' } }, grid: { display: false }, ticks: { maxTicksLimit: 10 } },
-          y: { grid: { display: false }, ticks: { maxTicksLimit: 6, padding: 15 } }
-        },
-        elements: { line: { tension: 0, borderWidth: 3.5 }, point: { radius: 4.5, hoverRadius: 7, pointStyle: 'rectRot' } }
-      }
-    });
-
-    // ─── ГРАФІК ОСВІТЛЕНОСТІ ───────────────────────────────────
-    new Chart(document.getElementById('lightChart'), {
-      type: 'line',
-      data: { datasets: [{ borderColor: '#f1c40f', pointBackgroundColor: '#f1c40f' }] },
-      options: {
-        animation: false,
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: { legend: { display: false } },
-        scales: {
-          x: { type: 'time', time: { unit: 'hour', displayFormats: { hour: 'HH:mm' } }, grid: { display: false }, ticks: { maxTicksLimit: 10 } },
-          y: { grid: { display: false }, ticks: { maxTicksLimit: 6, padding: 15 } }
-        },
-        elements: { line: { tension: 0, borderWidth: 3.5 }, point: { radius: 4.5, hoverRadius: 7, pointStyle: 'rectRot' } }
-      }
-    });
-
-    // ─── ОНОВЛЕННЯ ДАНИХ ───────────────────────────────────────
-    function update() {
+    function updateCharts() {
       fetch('/api/data?limit=2000')
         .then(r => r.json())
         .then(data => {
-          const labels = data.map(d => new Date(d.timestamp));
+          const times = data.map(d => d.timestamp);
 
-          Chart.getChart("tempChart").data.labels = labels;
-          Chart.getChart("tempChart").data.datasets[0].data = data.map(d => d.temp);
-          Chart.getChart("tempChart").update();
+          // Температура
+          tempChart.data.labels = times;
+          tempChart.data.datasets[0].data = data.map(d => ({ x: d.timestamp, y: d.temp }));
 
-          Chart.getChart("humChart").data.labels = labels;
-          Chart.getChart("humChart").data.datasets[0].data = data.map(d => d.hum);
-          Chart.getChart("humChart").update();
+          // Вологість
+          humChart.data.labels = times;
+          humChart.data.datasets[0].data = data.map(d => ({ x: d.timestamp, y: d.hum }));
 
-          Chart.getChart("lightChart").data.labels = labels;
-          Chart.getChart("lightChart").data.datasets[0].data = data.map(d => d.soil);
-          Chart.getChart("lightChart").update();
+          // Освітленість – два графіки в одному
+          lightChart.data.labels = times;
+          lightChart.data.datasets[0].data = data.map(d => ({ x: d.timestamp, y: d.soil }));                    // raw
+          lightChart.data.datasets[1].data = data.map(d => ({ x: d.timestamp, y: rawToPercent(d.soil) }));     // %
 
+          tempChart.update('quiet');
+          humChart.update('quiet');
+          lightChart.update('quiet');
+
+          // Останні значення
           if (data.length > 0) {
             const l = data[data.length-1];
-            const lightPerc = Math.round((1 - l.soil/4095)*100);
+            const lightPerc = rawToPercent(l.soil);
             document.getElementById('last-update').innerHTML = `
-              Останнє: <b>${new Date(l.timestamp).toLocaleString('uk-UA')}</b><br>
-              Температура <b>${l.temp.toFixed(1)}°C</b>  Вологість <b>${l.hum.toFixed(1)}%</b>  Світло <b>${l.soil}</b> (~${lightPerc}%)
+              Останнє оновлення: <b>${new Date(l.timestamp).toLocaleString('uk-UA')}</b><br><br>
+              Температура: <b>${l.temp.toFixed(1)} °C</b>  •  
+              Вологість повітря: <b>${l.hum.toFixed(1)} %</b><br>
+              Освітленість: <b>${l.soil}</b> (raw) → <b>${lightPerc} %</b>
+              ${lightPerc < 10 ? '(дуже темно)' : lightPerc < 30 ? '(тінь)' : lightPerc < 70 ? '(нормально)' : '(дуже світло)'}
             `;
           }
-        });
+        })
+        .catch(err => console.error(err));
     }
 
-    update();
-    setInterval(update, 20000);
+    updateCharts();
+    setInterval(updateCharts, 20000);
   </script>
 </body>
 </html>
