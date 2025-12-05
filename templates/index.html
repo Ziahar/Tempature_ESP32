@@ -18,7 +18,7 @@
 </head>
 <body>
   <h1>Моніторинг рослини (ESP32)</h1>
-  <div class="last" id="last-update">Завантаження даних...</div>
+  <div class="last" id="last-update">Завантаження...</div>
 
   <div class="charts">
     <div><canvas id="tempChart"></canvas></div>
@@ -27,55 +27,102 @@
   </div>
 
   <script>
+    // Створюємо графіки з правильними налаштуваннями
     const tempChart = new Chart(document.getElementById('tempChart'), {
       type: 'line',
-      data: { datasets: [{ label: 'Температура °C', borderColor: '#e74c3c', tension: 0.3, pointRadius: 3 }] },
-      options: { scales: { y: { min: 15, max: 35, ticks: { stepSize: 0.5 } }, x: { type: 'time', time: { unit: 'minute' } } }, plugins: { legend: { display: true } } }
+      data: { datasets: [{ label: 'Температура °C', borderColor: '#e74c3c', tension: 0.3, pointRadius: 4, fill: false }] },
+      options: {
+        scales: {
+          y: {
+            suggestedMin: 15,
+            suggestedMax: 35,
+            ticks: { stepSize: 0.5 }
+          },
+          x: { type: 'time', time: { unit: 'minute', displayFormats: { minute: 'HH:mm' } } }
+        },
+        plugins: { legend: { position: 'top' } },
+        maintainAspectRatio: false
+      }
     });
 
     const humChart = new Chart(document.getElementById('humChart'), {
       type: 'line',
-      data: { datasets: [{ label: 'Вологість повітря %', borderColor: '#3498db', tension: 0.3, pointRadius: 3 }] },
-      options: { scales: { y: { min: 30, max: 80, ticks: { stepSize: 2 } }, x: { type: 'time', time: { unit: 'minute' } } } }
+      data: { datasets: [{ label: 'Вологість повітря %', borderColor: '#3498db', tension: 0.3, pointRadius: 4 }] },
+      options: {
+        scales: {
+          y: {
+            suggestedMin: 30,
+            suggestedMax: 80,
+            ticks: { stepSize: 2 }
+          },
+          x: { type: 'time', time: { unit: 'minute' } }
+        },
+        maintainAspectRatio: false
+      }
     });
 
     const lightChart = new Chart(document.getElementById('lightChart'), {
       type: 'line',
-      data: { datasets: [{ label: 'Освітленість (0-4095)', borderColor: '#f1c40f', tension: 0.3, pointRadius: 3 }] },
-      options: { scales: { y: { min: 200, max: 4095, ticks: { stepSize: 100 } }, x: { type: 'time', time: { unit: 'minute' } } } }
+      data: { datasets: [{ label: 'Освітленість (0–4095)', borderColor: '#f1c40f', tension: 0.3, pointRadius: 4 }] },
+      options: {
+        scales: {
+          y: {
+            beginAtZero: true,           // завжди від 0
+            suggestedMax: 4095,
+            ticks: { stepSize: 500 }
+          },
+          x: { type: 'time', time: { unit: 'minute' } }
+        },
+        maintainAspectRatio: false
+      }
     });
 
-    function update() {
-      fetch('/api/data?limit=2000')
+    function updateCharts() {
+      fetch('/api/data?limit=3000')
         .then(r => r.json())
         .then(data => {
+          if (data.length === 0) return;
+
           const labels = data.map(d => new Date(d.timestamp));
 
+          // --- Температура ---
+          const tempValues = data.map(d => d.temp);
           tempChart.data.labels = labels;
-          tempChart.data.datasets[0].data = data.map(d => d.temp);
+          tempChart.data.datasets[0].data = tempValues;
+          tempChart.options.scales.y.min = Math.floor(Math.min(...tempValues) - 1);
+          tempChart.options.scales.y.max = Math.ceil(Math.max(...tempValues) + 1);
           tempChart.update('quiet');
 
+          // --- Вологість ---
+          const humValues = data.map(d => d.hum);
           humChart.data.labels = labels;
-          humChart.data.datasets[0].data = data.map(d => d.hum);
+          humChart.data.datasets[0].data = humValues;
+          humChart.options.scales.y.min = Math.floor(Math.min(...humValues) - 5);
+          humChart.options.scales.y.max = Math.ceil(Math.max(...humValues) + 5);
           humChart.update('quiet');
 
+          // --- Освітленість ---
+          const lightValues = data.map(d => d.light);
           lightChart.data.labels = labels;
-          lightChart.data.datasets[0].data = data.map(d => d.light);
+          lightChart.data.datasets[0].data = lightValues;
+          // Для освітленості завжди від 0 до max+100, щоб навіть 50 видно було
+          lightChart.options.scales.y.min = 0;
+          lightChart.options.scales.y.max = Math.max(4100, Math.max(...lightValues) + 200);
           lightChart.update('quiet');
 
-          if (data.length > 0) {
-            const last = data[data.length - 1];
-            document.getElementById('last-update').innerHTML = `
-              Останнє оновлення: <b>${new Date(last.timestamp).toLocaleString('uk-UA')}</b><br><br>
-              Температура: <b>${last.temp}°C</b>  Вологість: <b>${last.hum}%</b>  Освітленість: <b>${last.light}</b>
-            `;
-          }
+          // Останнє значення
+          const last = data[data.length - 1];
+          document.getElementById('last-update').innerHTML = `
+            Останнє оновлення: <b>${new Date(last.timestamp).toLocaleString('uk-UA')}</b><br><br>
+            Температура: <b>${last.temp}°C</b>  Вологість: <b>${last.hum}%</b>  Освітленість: <b>${last.light}</b>
+          `;
         })
-        .catch(err => console.error(err));
+        .catch(err => console.error("Помилка завантаження:", err));
     }
 
-    update();
-    setInterval(update, 20000);  // кожні 20 секунд
+    // Оновлюємо одразу і кожні 18 секунд
+    updateCharts();
+    setInterval(updateCharts, 18000);
   </script>
 </body>
 </html>
