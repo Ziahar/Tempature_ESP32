@@ -13,11 +13,7 @@
     .charts { display: grid; grid-template-columns: 1fr; gap: 25px; margin-top: 20px; }
     @media (min-width: 900px) { .charts { grid-template-columns: 1fr 1fr; } }
     canvas { background: white; border-radius: 12px; padding: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
-    .last {
-      text-align: center; font-size: 1.5em; padding: 20px; background: white;
-      border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); margin: 20px auto;
-      max-width: 900px;
-    }
+    .last { text-align: center; font-size: 1.5em; padding: 20px; background: white; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); margin: 20px auto; max-width: 900px; }
   </style>
 </head>
 <body>
@@ -32,19 +28,21 @@
   </div>
 
   <script>
-    // Температура
-    new Chart(document.getElementById('tempChart'), {
+    // Температура (залишаємо 1 знак)
+    new Chart('tempChart', {
       type: 'line',
       data: { datasets: [{ label: 'Температура °C', borderColor: '#e74c3c', backgroundColor: '#e74c3c22', tension: 0.4, fill: true }] },
-      options: { scales: { x: { type: 'time', time: { unit: 'hour' }}, y: { beginAtZero: false }}}
+      options: {
+        scales: { x: { type: 'time', time: { unit: 'hour' }}},
+        plugins: { tooltip: { callbacks: { label: ctx => ctx.parsed.y.toFixed(1) + ' °C' }}}
+      }
     });
 
-    // Вологість повітря — саме той старий гарний варіант, який тобі подобався
-    const humChart = new Chart(document.getElementById('humChart'), {
+    // Вологість повітря — старий красивий стиль + два знаки після коми
+    const humChart = new Chart('humChart', {
       type: 'line',
       data: { datasets: [{
         label: 'Вологість повітря %',
-        data: [],
         borderColor: '#3498db',
         backgroundColor: 'rgba(52, 152, 219, 0.15)',
         tension: 0.4,
@@ -53,15 +51,20 @@
       }]},
       options: {
         scales: {
-          x: { type: 'time', time: { unit: 'hour' }},
           y: { suggestedMin: 20, suggestedMax: 80, ticks: { stepSize: 10 }}
         },
-        plugins: { legend: { labels: { font: { size: 16 }}}}
+        plugins: {
+          tooltip: {
+            callbacks: {
+              label: ctx => ctx.parsed.y.toFixed(2) + ' %'
+            }
+          }
+        }
       }
     });
 
-    // Освітленість
-    const lightChart = new Chart(document.getElementById('lightChart'), {
+    // Освітленість — тепер теж з двома знаками
+    const lightChart = new Chart('lightChart', {
       type: 'line',
       data: { datasets: [{
         label: 'Освітленість',
@@ -72,11 +75,14 @@
       }]},
       options: {
         scales: {
-          x: { type: 'time', time: { unit: 'hour' }},
           y: { suggestedMin: 0, suggestedMax: 4095, ticks: { stepSize: 500 }}
         },
         plugins: {
-          tooltip: { callbacks: { afterLabel: () => '0 = темно • 4095 = дуже яскраво' }}
+          tooltip: {
+            callbacks: {
+              label: ctx => ctx.parsed.y.toFixed(2) + ' (0 = темно, 4095 = дуже яскраво)'
+            }
+          }
         }
       }
     });
@@ -87,29 +93,28 @@
         .then(data => {
           const labels = data.map(d => d.timestamp);
 
-          // Оновлюємо всі три графіки
-          document.querySelectorAll('canvas').forEach(canvas => {
-            const chart = Chart.getChart(canvas);
-            chart.data.labels = labels;
-          });
-
+          Chart.getChart('tempChart').data.labels = labels;
           Chart.getChart('tempChart').data.datasets[0].data = data.map(d => d.temp);
+
+          humChart.data.labels = labels;
           humChart.data.datasets[0].data = data.map(d => d.hum);
+
+          lightChart.data.labels = labels;
           lightChart.data.datasets[0].data = data.map(d => d.soil);
 
           Chart.getChart('tempChart').update('quiet');
           humChart.update('quiet');
           lightChart.update('quiet');
 
-          // Останні значення
           if (data.length > 0) {
             const l = data[data.length-1];
             const lightText = l.soil < 300 ? "дуже темно" : l.soil < 1000 ? "тінь" : l.soil < 2500 ? "нормально" : "дуже яскраво";
+
             document.getElementById('last-update').innerHTML = `
-              Останнє: ${new Date(l.timestamp).toLocaleString('uk-UA')}<br><br>
-              Температура: <b>${l.temp.toFixed(1)}°C</b>  |
-              Вологість повітря: <b>${l.hum.toFixed(1)}%</b>  |
-              Освітленість: <b>${l.soil}</b> (${lightText})
+              Останнє оновлення: ${new Date(l.timestamp).toLocaleString('uk-UA')}<br><br>
+              Температура: <b>${l.temp.toFixed(1)} °C</b><br>
+              Вологість повітря: <b>${l.hum.toFixed(2)} %</b><br>
+              Освітленість: <b>${l.soil.toFixed(2)}</b> → ${lightText}
             `;
           }
         });
