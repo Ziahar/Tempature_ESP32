@@ -9,14 +9,12 @@ app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///data.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-# Ініціалізація бази даних
 db = SQLAlchemy(app)
 
-# Модель даних
 class Measurement(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     timestamp = db.Column(db.DateTime, default=datetime.utcnow, index=True)
-    light = db.Column(db.Integer, nullable=False)   # освітленість (було soil)
+    light = db.Column(db.Integer, nullable=False)
     temp = db.Column(db.Float, nullable=False)
     hum = db.Column(db.Float, nullable=False)
 
@@ -28,13 +26,12 @@ class Measurement(db.Model):
             "hum": round(self.hum, 1)
         }
 
-# Створюємо таблиці
 with app.app_context():
     db.create_all()
 
 # === НАЛАШТУВАННЯ TELEGRAM БОТА ===
 TELEGRAM_TOKEN = '8561971309:AAG7dKvFlGYO5weT42p9OBdCD5ZkbyL2daQ'
-CHAT_ID = 1481541168   # твій chat ID (без лапок!)
+CHAT_ID = 1481541168   # твій особистий chat ID
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
@@ -45,30 +42,24 @@ def send_notification(message):
     except Exception as e:
         print(f"[Telegram] Помилка: {e}")
 
-# Фонова перевірка останніх даних
+# Фонова перевірка небезпечних значень
 def check_alerts():
     while True:
         with app.app_context():
             last = Measurement.query.order_by(Measurement.timestamp.desc()).first()
             if last:
-                temp = last.temp
-                hum = last.hum
-                light = last.light
-
                 alert = ""
-                if temp > 30:     alert += f"Висока температура: {temp}°C! "
-                if hum > 70:      alert += f"Висока вологість: {hum}%! "
-                if light < 200:   alert += f"Низька освітленість: {light}! "
+                if last.temp > 30:     alert += f"Висока температура: {last.temp}°C! "
+                if last.hum > 70:      alert += f"Висока вологість: {last.hum}%! "
+                if last.light < 200:   alert += f"Низька освітленість: {last.light}! "
 
                 if alert:
                     send_notification(f"⚠️ Сповіщення!\n{alert}\nЧас: {last.timestamp.strftime('%Y-%m-%d %H:%M:%S')}")
-
         time.sleep(60)
 
-# Запускаємо перевірку сповіщень
 threading.Thread(target=check_alerts, daemon=True).start()
 
-# Запускаємо polling бота (щоб відповідав на команди)
+# Запускаємо polling бота
 def run_bot_polling():
     print("[Telegram] Запущено polling бота...")
     try:
@@ -78,8 +69,38 @@ def run_bot_polling():
 
 threading.Thread(target=run_bot_polling, daemon=True).start()
 
-# Тестове повідомлення при запуску сервера
-send_notification("Сервер запущено! Бот готовий надсилати сповіщення 🌱")
+# Тестове повідомлення при запуску
+send_notification("Сервер запущено! Бот готовий надсилати сповіщення 🏠")
+
+# === ОБРОБНИКИ КОМАНД БОТА ===
+
+@bot.message_handler(commands=['start'])
+def send_welcome(message):
+    bot.reply_to(message, "Привіт! Я бот моніторингу розумного будинку 🏠\n"
+                          "Надсилаю сповіщення про небезпеку.\n"
+                          "Команди:\n/start — привітання\n/status — останні дані")
+
+@bot.message_handler(commands=['status'])
+def send_status(message):
+    with app.app_context():
+        last = Measurement.query.order_by(Measurement.timestamp.desc()).first()
+        if last:
+            reply = (
+                f"Останні дані з датчиків:\n\n"
+                f"🌡️ Температура: {last.temp} °C\n"
+                f"💧 Вологість повітря: {last.hum} %\n"
+                f"☀️ Освітленість: {last.light} (raw)\n"
+                f"🕒 Час: {last.timestamp.strftime('%Y-%m-%d %H:%M:%S')}"
+            )
+            bot.reply_to(message, reply)
+        else:
+            bot.reply_to(message, "Ще немає даних у базі 😔\n"
+                                  "Зачекай, поки ESP32 надішле перші показники.")
+
+@bot.message_handler(func=lambda m: True)
+def echo_all(message):
+    bot.reply_to(message, "Я отримав твоє повідомлення, але поки вмію тільки:\n"
+                          "/start — привітання\n/status — показати дані")
 
 # ==================================================
 # Ендпоінт для даних від ESP32
@@ -102,9 +123,9 @@ def receive_data():
         if measurement.temp > 30 or measurement.hum > 70 or measurement.light < 200:
             send_notification(
                 f"🚨 НЕБЕЗПЕКА!\n"
-                f"T: {measurement.temp}°C\n"
-                f"H: {measurement.hum}%\n"
-                f"Світло: {measurement.light}\n"
+                f"Температура: {measurement.temp}°C\n"
+                f"Вологість: {measurement.hum}%\n"
+                f"Освітленість: {measurement.light}\n"
                 f"Час: {measurement.timestamp.strftime('%H:%M:%S')}"
             )
 
@@ -114,12 +135,10 @@ def receive_data():
         print(f"Помилка обробки даних: {e}")
         return jsonify({"error": str(e)}), 400
 
-# Головна сторінка з графіками
 @app.route('/')
 def index():
     return render_template('index.html')
 
-# API для графіків
 @app.route('/api/data')
 def api_data():
     limit = request.args.get('limit', 1000, type=int)
