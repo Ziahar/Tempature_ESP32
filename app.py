@@ -12,7 +12,7 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 # Ініціалізація бази даних
 db = SQLAlchemy(app)
 
-# Модель даних (тепер прямо в app.py, щоб не було проблем з імпортом)
+# Модель даних
 class Measurement(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     timestamp = db.Column(db.DateTime, default=datetime.utcnow, index=True)
@@ -28,15 +28,13 @@ class Measurement(db.Model):
             "hum": round(self.hum, 1)
         }
 
-# Створюємо таблиці при першому запуску
+# Створюємо таблиці
 with app.app_context():
     db.create_all()
 
 # === НАЛАШТУВАННЯ TELEGRAM БОТА ===
 TELEGRAM_TOKEN = '8561971309:AAG7dKvFlGYO5weT42p9OBdCD5ZkbyL2daQ'
-CHAT_ID = '1481541168'  # ← це виглядає як chat_id бота, а не твій особистий!
-                        # Заміни на СВІЙ chat_id (наприклад 123456789)
-                        # Як дізнатися: надішли повідомлення боту і подивись в @userinfobot або @getidsbot
+CHAT_ID = 1481541168   # твій chat ID (без лапок!)
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
@@ -45,9 +43,9 @@ def send_notification(message):
         bot.send_message(CHAT_ID, message)
         print(f"[Telegram] Надіслано: {message}")
     except Exception as e:
-        print(f"[Telegram] Помилка надсилання: {e}")
+        print(f"[Telegram] Помилка: {e}")
 
-# Фонова перевірка останніх даних кожні 60 секунд
+# Фонова перевірка останніх даних
 def check_alerts():
     while True:
         with app.app_context():
@@ -67,8 +65,21 @@ def check_alerts():
 
         time.sleep(60)
 
-# Запускаємо перевірку в окремому потоці
+# Запускаємо перевірку сповіщень
 threading.Thread(target=check_alerts, daemon=True).start()
+
+# Запускаємо polling бота (щоб відповідав на команди)
+def run_bot_polling():
+    print("[Telegram] Запущено polling бота...")
+    try:
+        bot.polling(none_stop=True, interval=0, timeout=30)
+    except Exception as e:
+        print(f"[Telegram] Polling помилка: {e}")
+
+threading.Thread(target=run_bot_polling, daemon=True).start()
+
+# Тестове повідомлення при запуску сервера
+send_notification("Сервер запущено! Бот готовий надсилати сповіщення 🌱")
 
 # ==================================================
 # Ендпоінт для даних від ESP32
