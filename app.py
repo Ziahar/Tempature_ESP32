@@ -4,6 +4,7 @@ from datetime import datetime
 import telebot
 import threading
 import time
+import requests  # Для надсилання запитів на ESP32
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///data.db'
@@ -31,9 +32,16 @@ with app.app_context():
 
 # === НАЛАШТУВАННЯ TELEGRAM БОТА ===
 TELEGRAM_TOKEN = '8561971309:AAG7dKvFlGYO5weT42p9OBdCD5ZkbyL2daQ'
-CHAT_ID = 1481541168   # твій особистий chat ID
+CHAT_ID = 1481541168
+SECRET_CODE = '1234'  # Зміни на свій секретний код!
+
+# IP-адреса ESP32 (заміни на актуальну, або зроби динамічною)
+ESP_IP = "192.168.1.107"  # ← твоя IP від ESP32
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
+
+# Тимчасовий стан для введення коду
+user_state = {}  # {user_id: {'command': 'led_on', 'waiting_code': True}}
 
 def send_notification(message):
     try:
@@ -70,15 +78,20 @@ def run_bot_polling():
 threading.Thread(target=run_bot_polling, daemon=True).start()
 
 # Тестове повідомлення при запуску
-send_notification("Сервер запущено! Бот готовий надсилати сповіщення 🏠")
+send_notification("Розумний будинок онлайн! 🏠\n"
+                  "Напиши /start для керування та моніторингу")
 
 # === ОБРОБНИКИ КОМАНД БОТА ===
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    bot.reply_to(message, "Привіт! Я бот моніторингу розумного будинку 🏠\n"
-                          "Надсилаю сповіщення про небезпеку.\n"
-                          "Команди:\n/start — привітання\n/status — останні дані")
+    bot.reply_to(message, "Привіт! Це бот керування та моніторингу розумного будинку 🏠\n"
+                          "Функції:\n"
+                          "/start — це привітання\n"
+                          "/status — показати останні дані\n"
+                          "/led_on — увімкнути світлодіод\n"
+                          "/led_off — вимкнути світлодіод\n"
+                          "Для керування потрібен секретний код!")
 
 @bot.message_handler(commands=['status'])
 def send_status(message):
@@ -86,7 +99,7 @@ def send_status(message):
         last = Measurement.query.order_by(Measurement.timestamp.desc()).first()
         if last:
             reply = (
-                f"Останні дані з датчиків:\n\n"
+                f"Останні дані з будинку:\n\n"
                 f"🌡️ Температура: {last.temp} °C\n"
                 f"💧 Вологість повітря: {last.hum} %\n"
                 f"☀️ Освітленість: {last.light} (raw)\n"
@@ -94,67 +107,15 @@ def send_status(message):
             )
             bot.reply_to(message, reply)
         else:
-            bot.reply_to(message, "Ще немає даних у базі 😔\n"
-                                  "Зачекай, поки ESP32 надішле перші показники.")
-
-@bot.message_handler(func=lambda m: True)
-def echo_all(message):
-    bot.reply_to(message, "Я отримав твоє повідомлення, але поки вмію тільки:\n"
-                          "/start — привітання\n/status — показати дані")
-
-# ==================================================
-# Ендпоінт для даних від ESP32
-@app.route('/data', methods=['POST'])
-def receive_data():
-    try:
-        data = request.get_json(force=True)
-        print(f"Отримано від ESP32: {data}")
-
-        measurement = Measurement(
-            light=int(data.get('soil', data.get('light', 0))),
-            temp=float(data['temp']),
-            hum=float(data['hum'])
-        )
-
-        db.session.add(measurement)
-        db.session.commit()
-
-        # Миттєве сповіщення при критичних значеннях
-        if measurement.temp > 30 or measurement.hum > 70 or measurement.light < 200:
-            send_notification(
-                f"🚨 НЕБЕЗПЕКА!\n"
-                f"Температура: {measurement.temp}°C\n"
-                f"Вологість: {measurement.hum}%\n"
-                f"Освітленість: {measurement.light}\n"
-                f"Час: {measurement.timestamp.strftime('%H:%M:%S')}"
-            )
-
-        return jsonify({"status": "ok"}), 200
-
-    except Exception as e:
-        print(f"Помилка обробки даних: {e}")
-        return jsonify({"error": str(e)}), 400
-
-@app.route('/')
-def index():
-    return render_template('index.html')
-
-@app.route('/api/data')
-def api_data():
-    limit = request.args.get('limit', 1000, type=int)
-    measurements = Measurement.query.order_by(Measurement.timestamp.desc()).limit(limit).all()
-    measurements.reverse()
-    return jsonify([m.to_dict() for m in measurements])
-# === Керування пристроями через бот ===
-ESP_IP = "192.168.1.107"  # Заміни на актуальну IP-адресу твого ESP32 (можна зробити змінною)
+            bot.reply_to(message, "Ще немає даних від датчиків 😔")
 
 @bot.message_handler(commands=['led_on', 'led_off'])
-def control_led(message):
-    command = message.text[1:]  # led_on або led_off
+def request_code_for_control(message):
+    command = message.text[1:]  # 'led_on' або 'led_off'
     user_id = message.from_user.id
 
     if user_id != CHAT_ID:
-        bot.reply_to(message, "Доступ заборонено! Тільки власник може керувати.")
+        bot.reply_to(message, "Доступ заборонено! Тільки власник може керувати будинком.")
         return
 
     user_state[user_id] = {'command': command, 'waiting_code': True}
@@ -178,7 +139,6 @@ def handle_code_or_text(message):
                 action = "вимкнено"
 
             try:
-                import requests
                 response = requests.get(url, timeout=5)
                 if response.status_code == 200:
                     bot.reply_to(message, f"Світлодіод {action} успішно! 💡")
@@ -191,8 +151,51 @@ def handle_code_or_text(message):
         else:
             bot.reply_to(message, "Неправильний код! Спробуй ще раз.")
     else:
-        # Якщо не код — звичайна відповідь
-        bot.reply_to(message, "Напиши /start або /status")
+        bot.reply_to(message, "Напиши /start або /status для даних будинку")
+
+# ==================================================
+# Ендпоінт для даних від ESP32
+@app.route('/data', methods=['POST'])
+def receive_data():
+    try:
+        data = request.get_json(force=True)
+        print(f"Отримано від ESP32: {data}")
+
+        measurement = Measurement(
+            light=int(data.get('soil', data.get('light', 0))),
+            temp=float(data['temp']),
+            hum=float(data['hum'])
+        )
+
+        db.session.add(measurement)
+        db.session.commit()
+
+        # Миттєве сповіщення при критичних значеннях
+        if measurement.temp > 30 or measurement.hum > 70 or measurement.light < 200:
+            send_notification(
+                f"🚨 НЕБЕЗПЕКА В БУДИНКУ!\n"
+                f"Температура: {measurement.temp}°C\n"
+                f"Вологість: {measurement.hum}%\n"
+                f"Освітленість: {measurement.light}\n"
+                f"Час: {measurement.timestamp.strftime('%H:%M:%S')}"
+            )
+
+        return jsonify({"status": "ok"}), 200
+
+    except Exception as e:
+        print(f"Помилка обробки даних: {e}")
+        return jsonify({"error": str(e)}), 400
+
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+@app.route('/api/data')
+def api_data():
+    limit = request.args.get('limit', 1000, type=int)
+    measurements = Measurement.query.order_by(Measurement.timestamp.desc()).limit(limit).all()
+    measurements.reverse()
+    return jsonify([m.to_dict() for m in measurements])
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
