@@ -145,6 +145,54 @@ def api_data():
     measurements = Measurement.query.order_by(Measurement.timestamp.desc()).limit(limit).all()
     measurements.reverse()
     return jsonify([m.to_dict() for m in measurements])
+# === Керування пристроями через бот ===
+ESP_IP = "192.168.1.107"  # Заміни на актуальну IP-адресу твого ESP32 (можна зробити змінною)
+
+@bot.message_handler(commands=['led_on', 'led_off'])
+def control_led(message):
+    command = message.text[1:]  # led_on або led_off
+    user_id = message.from_user.id
+
+    if user_id != CHAT_ID:
+        bot.reply_to(message, "Доступ заборонено! Тільки власник може керувати.")
+        return
+
+    user_state[user_id] = {'command': command, 'waiting_code': True}
+    bot.reply_to(message, "Введи секретний код для керування пристроями:")
+
+@bot.message_handler(func=lambda m: True)
+def handle_code_or_text(message):
+    user_id = message.from_user.id
+
+    if user_id in user_state and user_state[user_id].get('waiting_code', False):
+        code = message.text.strip()
+        if code == SECRET_CODE:
+            command = user_state[user_id]['command']
+            url = ""
+
+            if command == 'led_on':
+                url = f"http://{ESP_IP}/led/on"
+                action = "увімкнено"
+            elif command == 'led_off':
+                url = f"http://{ESP_IP}/led/off"
+                action = "вимкнено"
+
+            try:
+                import requests
+                response = requests.get(url, timeout=5)
+                if response.status_code == 200:
+                    bot.reply_to(message, f"Світлодіод {action} успішно! 💡")
+                else:
+                    bot.reply_to(message, f"Помилка: ESP32 відповів {response.status_code}")
+            except Exception as e:
+                bot.reply_to(message, f"Не вдалося підключитися до ESP32: {str(e)}")
+
+            del user_state[user_id]
+        else:
+            bot.reply_to(message, "Неправильний код! Спробуй ще раз.")
+    else:
+        # Якщо не код — звичайна відповідь
+        bot.reply_to(message, "Напиши /start або /status")
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
