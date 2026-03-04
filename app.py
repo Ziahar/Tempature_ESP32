@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify, render_template
 from flask_sqlalchemy import SQLAlchemy
-from datetime import datetime
+from datetime import datetime, time
 import telebot
 import threading
 import time
@@ -8,6 +8,7 @@ import requests
 import matplotlib.pyplot as plt
 import io
 from matplotlib.dates import DateFormatter
+from zoneinfo import ZoneInfo
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///data.db'
@@ -41,35 +42,42 @@ with app.app_context():
 TELEGRAM_TOKEN = '8561971309:AAG7dKvFlGYO5weT42p9OBdCD5ZkbyL2daQ'
 CHAT_ID = 1481541168
 SECRET_CODE = '1234'
-ESP_IP = "192.168.1.107"  # Заміни на актуальну
+ESP_IP = "192.168.1.107"  # Заміни на актуальну IP
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 user_state = {}
 
+# Перемикач сповіщень (зберігається в пам'яті, можна зробити в файл або базу)
+alerts_enabled = True  # За замовчуванням увімкнено
+
 def send_notification(message):
+    if not alerts_enabled:
+        print(f"[Telegram] Сповіщення вимкнено: {message}")
+        return
     try:
         bot.send_message(CHAT_ID, message)
         print(f"[Telegram] Надіслано: {message}")
     except Exception as e:
         print(f"[Telegram] Помилка: {e}")
 
-# Фонова перевірка 
+# Фонова перевірка небезпечних значень
 def check_alerts():
     while True:
         with app.app_context():
             last = Measurement.query.order_by(Measurement.timestamp.desc()).first()
-            if last:
-                alert = ""
-                if last.temp > 30: alert += f"Висока температура: {last.temp}°C! "
-                if last.hum > 70: alert += f"Висока вологість: {last.hum}%! "
-                if last.light < 200: alert += f"Низька освітленість: {last.light}! "
-
-                if alert:
-                    send_notification(f"⚠️ Сповіщення!\n{alert}\nЧас: {last.timestamp.strftime('%Y-%m-%d %H:%M:%S')}")
+            if last and alerts_enabled:
+                if last.temp > 28:
+                    send_notification(f"🌡️ У будинку жарко: {last.temp}°C!\n"
+                                      f"Рекомендую увімкнути вентилятор для комфортної температури.")
+                if last.gas:
+                    send_notification("🚨 Виявлено газ/дим!\nВідчиніть вікно та викличіть 104!")
+                if last.motion:
+                    send_notification("🚨 Небезпека вторгнення!\nPIR-датчик спрацював!")
         time.sleep(60)
 
 threading.Thread(target=check_alerts, daemon=True).start()
 
+# Запуск polling бота
 def run_bot_polling():
     print("[Telegram] Бот запущено...")
     try:
@@ -85,14 +93,28 @@ send_notification("Розумний будинок онлайн 🏠\nНапиш
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    bot.reply_to(message, "Привіт! Це бот моніторингу та керування розумним будинком 🏠\n"
+    status = "увімкнені" if alerts_enabled else "вимкнені"
+    bot.reply_to(message, f"Привіт! Це бот моніторингу та керування розумним будинком 🏠\n"
+                          f"Сповіщення зараз: {status}\n\n"
                           "Команди:\n"
                           "/start — привітання\n"
                           "/status — останні дані\n"
                           "/history [дата] HH:MM HH:MM — графік за період\n"
-                          "Приклад: /history 15:00 16:00\n"
-                          "Або: /history 2025-03-01 10:00 12:00\n"
+                          "/alerts_on — увімкнути сповіщення\n"
+                          "/alerts_off — вимкнути сповіщення\n"
                           "/led_on — увімкнути LED\n/led_off — вимкнути LED")
+
+@bot.message_handler(commands=['alerts_on'])
+def enable_alerts(message):
+    global alerts_enabled
+    alerts_enabled = True
+    bot.reply_to(message, "Сповіщення про небезпеку увімкнено! ⚠️")
+
+@bot.message_handler(commands=['alerts_off'])
+def disable_alerts(message):
+    global alerts_enabled
+    alerts_enabled = False
+    bot.reply_to(message, "Сповіщення про небезпеку вимкнено. Ти не отримуватимеш повідомлень про газ, рух чи температуру.")
 
 @bot.message_handler(commands=['status'])
 def send_status(message):
@@ -116,18 +138,18 @@ def send_status(message):
 def send_history(message):
     args = message.text.split()[1:]
     if len(args) not in (2, 3):
-        bot.reply_to(message, "Формат:\n/history HH:MM HH:MM\nабо\n/history YYYY-MM-DD HH:MM HH:MM\nПриклад:\n/history 15:00 16:00\n/history 2025-03-01 10:00 12:00")
+        bot.reply_to(message, "Формат:\n/history HH:MM HH:MM\nабо\n/history YYYY-MM-DD HH:MM HH:MM\nПриклад:\n/history 15:00 16:00")
         return
 
     try:
         if len(args) == 2:
-            date_str = datetime.now().strftime("%Y-%m-%d")
+            date_str = datetime.now(ZoneInfo("Europe/Kyiv")).strftime("%Y-%m-%d")
             start_str, end_str = args
         else:
             date_str, start_str, end_str = args
 
-        start_dt = datetime.strptime(f"{date_str} {start_str}", "%Y-%m-%d %H:%M")
-        end_dt = datetime.strptime(f"{date_str} {end_str}", "%Y-%m-%d %H:%M")
+        start_dt = datetime.strptime(f"{date_str} {start_str}", "%Y-%m-%d %H:%M").replace(tzinfo=ZoneInfo("Europe/Kyiv")).astimezone(datetime.utcnow().tzinfo or None)
+        end_dt = datetime.strptime(f"{date_str} {end_str}", "%Y-%m-%d %H:%M").replace(tzinfo=ZoneInfo("Europe/Kyiv")).astimezone(datetime.utcnow().tzinfo or None)
 
         with app.app_context():
             records = Measurement.query.filter(
@@ -145,34 +167,37 @@ def send_history(message):
             hums = [r.hum for r in records]
             lights = [r.light for r in records]
 
-            fig, ax1 = plt.subplots(figsize=(10, 6))
+            fig, ax1 = plt.subplots(figsize=(12, 7))
 
-            ax1.set_xlabel('Час')
-            ax1.set_ylabel('Температура (°C) / Вологість (%)', color='tab:blue')
-            ax1.plot(times, temps, color='tab:red', label='Температура', linewidth=2)
-            ax1.plot(times, hums, color='tab:blue', label='Вологість', linewidth=2)
+            ax1.set_xlabel('Час (локальний)', fontsize=12)
+            ax1.set_ylabel('Температура (°C) / Вологість (%)', color='tab:blue', fontsize=12)
+            ax1.plot(times, temps, color='tab:red', label='Температура', linewidth=2.5)
+            ax1.plot(times, hums, color='tab:blue', label='Вологість', linewidth=2.5)
             ax1.tick_params(axis='y', labelcolor='tab:blue')
-            ax1.legend(loc='upper left')
+            ax1.legend(loc='upper left', fontsize=10)
 
             ax2 = ax1.twinx()
-            ax2.set_ylabel('Освітленість (raw)', color='tab:orange')
-            ax2.plot(times, lights, color='tab:orange', label='Освітленість', linewidth=2)
+            ax2.set_ylabel('Освітленість (raw)', color='tab:orange', fontsize=12)
+            ax2.plot(times, lights, color='tab:orange', label='Освітленість', linewidth=2.5)
             ax2.tick_params(axis='y', labelcolor='tab:orange')
-            ax2.legend(loc='upper right')
+            ax2.legend(loc='upper right', fontsize=10)
 
-            fig.suptitle(f'Дані за період {date_str} {start_str}–{end_str}', fontsize=16)
+            fig.suptitle(f'Дані за період {date_str} {start_str} – {end_str}', fontsize=16, y=0.98)
             fig.autofmt_xdate()
             ax1.xaxis.set_major_formatter(DateFormatter('%H:%M'))
+            plt.tight_layout()
 
             buf = io.BytesIO()
-            plt.savefig(buf, format='png', bbox_inches='tight')
+            plt.savefig(buf, format='png', dpi=150, bbox_inches='tight')
             buf.seek(0)
             plt.close()
 
-            bot.send_photo(message.chat.id, buf, caption=f"Графік за {start_str}–{end_str} ({date_str})")
+            bot.send_photo(message.chat.id, buf, caption=f"Графік за {date_str} {start_str} – {end_str}")
 
     except ValueError:
-        bot.reply_to(message, "Неправильний формат! Приклад:\n/history 15:00 16:00\nабо /history 2025-03-01 10:00 12:00")
+        bot.reply_to(message, "Неправильний формат дати/часу!\nПриклад:\n/history 15:00 16:00\n/history 2025-03-01 10:00 12:00")
+    except Exception as e:
+        bot.reply_to(message, f"Помилка: {str(e)}")
 
 @bot.message_handler(commands=['led_on', 'led_off'])
 def request_code(message):
