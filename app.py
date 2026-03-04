@@ -1,10 +1,9 @@
 from flask import Flask, request, jsonify, render_template
 from flask_sqlalchemy import SQLAlchemy
-from datetime import datetime, time
+from datetime import datetime
 import telebot
 import threading
 import time
-import requests
 import matplotlib.pyplot as plt
 import io
 from matplotlib.dates import DateFormatter
@@ -41,19 +40,10 @@ with app.app_context():
 # === НАЛАШТУВАННЯ TELEGRAM БОТА ===
 TELEGRAM_TOKEN = '8561971309:AAG7dKvFlGYO5weT42p9OBdCD5ZkbyL2daQ'
 CHAT_ID = 1481541168
-SECRET_CODE = '1234'
-ESP_IP = "192.168.1.107"  # Заміни на актуальну IP
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
-user_state = {}
-
-# Перемикач сповіщень (зберігається в пам'яті, можна зробити в файл або базу)
-alerts_enabled = True  # За замовчуванням увімкнено
 
 def send_notification(message):
-    if not alerts_enabled:
-        print(f"[Telegram] Сповіщення вимкнено: {message}")
-        return
     try:
         bot.send_message(CHAT_ID, message)
         print(f"[Telegram] Надіслано: {message}")
@@ -65,7 +55,8 @@ def check_alerts():
     while True:
         with app.app_context():
             last = Measurement.query.order_by(Measurement.timestamp.desc()).first()
-            if last and alerts_enabled:
+            if last:
+                alert = ""
                 if last.temp > 28:
                     send_notification(f"🌡️ У будинку жарко: {last.temp}°C!\n"
                                       f"Рекомендую увімкнути вентилятор для комфортної температури.")
@@ -93,28 +84,13 @@ send_notification("Розумний будинок онлайн 🏠\nНапиш
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    status = "увімкнені" if alerts_enabled else "вимкнені"
-    bot.reply_to(message, f"Привіт! Це бот моніторингу та керування розумним будинком 🏠\n"
-                          f"Сповіщення зараз: {status}\n\n"
+    bot.reply_to(message, "Привіт! Це бот моніторингу розумного будинку 🏠\n"
+                          "Я надсилаю сповіщення про небезпеку (газ, рух, температура).\n\n"
                           "Команди:\n"
-                          "/start — привітання\n"
+                          "/start — це привітання\n"
                           "/status — останні дані\n"
                           "/history [дата] HH:MM HH:MM — графік за період\n"
-                          "/alerts_on — увімкнути сповіщення\n"
-                          "/alerts_off — вимкнути сповіщення\n"
-                          "/led_on — увімкнути LED\n/led_off — вимкнути LED")
-
-@bot.message_handler(commands=['alerts_on'])
-def enable_alerts(message):
-    global alerts_enabled
-    alerts_enabled = True
-    bot.reply_to(message, "Сповіщення про небезпеку увімкнено! ⚠️")
-
-@bot.message_handler(commands=['alerts_off'])
-def disable_alerts(message):
-    global alerts_enabled
-    alerts_enabled = False
-    bot.reply_to(message, "Сповіщення про небезпеку вимкнено. Ти не отримуватимеш повідомлень про газ, рух чи температуру.")
+                          "Приклад:\n/history 15:00 16:00\n/history 2025-03-01 10:00 12:00")
 
 @bot.message_handler(commands=['status'])
 def send_status(message):
@@ -198,50 +174,6 @@ def send_history(message):
         bot.reply_to(message, "Неправильний формат дати/часу!\nПриклад:\n/history 15:00 16:00\n/history 2025-03-01 10:00 12:00")
     except Exception as e:
         bot.reply_to(message, f"Помилка: {str(e)}")
-
-@bot.message_handler(commands=['led_on', 'led_off'])
-def request_code(message):
-    command = message.text[1:]
-    user_id = message.from_user.id
-
-    if user_id != CHAT_ID:
-        bot.reply_to(message, "Доступ заборонено!")
-        return
-
-    user_state[user_id] = {'command': command, 'waiting_code': True}
-    bot.reply_to(message, "Введи секретний код:")
-
-@bot.message_handler(func=lambda m: True)
-def handle_message(message):
-    user_id = message.from_user.id
-
-    if user_id in user_state and user_state[user_id].get('waiting_code', False):
-        code = message.text.strip()
-        if code == SECRET_CODE:
-            command = user_state[user_id]['command']
-            url = ""
-
-            if command == 'led_on':
-                url = f"http://{ESP_IP}/led/on"
-                action = "увімкнено"
-            elif command == 'led_off':
-                url = f"http://{ESP_IP}/led/off"
-                action = "вимкнено"
-
-            try:
-                response = requests.get(url, timeout=5)
-                if response.status_code == 200:
-                    bot.reply_to(message, f"Світлодіод {action} успішно! 💡")
-                else:
-                    bot.reply_to(message, f"Помилка: {response.status_code}")
-            except Exception as e:
-                bot.reply_to(message, f"Не вдалося підключитися до ESP32: {str(e)}")
-
-            del user_state[user_id]
-        else:
-            bot.reply_to(message, "Неправильний код!")
-    else:
-        bot.reply_to(message, "Напиши /start, /status або /history")
 
 # ==================================================
 @app.route('/data', methods=['POST'])
