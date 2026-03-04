@@ -4,6 +4,10 @@ from datetime import datetime
 import telebot
 import threading
 import time
+import requests
+import matplotlib.pyplot as plt
+import io
+from matplotlib.dates import DateFormatter
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///data.db'
@@ -17,8 +21,8 @@ class Measurement(db.Model):
     light = db.Column(db.Integer, nullable=False)
     temp = db.Column(db.Float, nullable=False)
     hum = db.Column(db.Float, nullable=False)
-    motion = db.Column(db.Boolean, default=False)   # PIR
-    gas = db.Column(db.Boolean, default=False)      # Газ/дим
+    motion = db.Column(db.Boolean, default=False)
+    gas = db.Column(db.Boolean, default=False)
 
     def to_dict(self):
         return {
@@ -36,8 +40,11 @@ with app.app_context():
 # === НАЛАШТУВАННЯ TELEGRAM БОТА ===
 TELEGRAM_TOKEN = '8561971309:AAG7dKvFlGYO5weT42p9OBdCD5ZkbyL2daQ'
 CHAT_ID = 1481541168
+SECRET_CODE = '1234'
+ESP_IP = "192.168.1.107"  # Заміни на актуальну
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
+user_state = {}
 
 def send_notification(message):
     try:
@@ -46,19 +53,23 @@ def send_notification(message):
     except Exception as e:
         print(f"[Telegram] Помилка: {e}")
 
-# Фонова перевірка (жарко)
+# Фонова перевірка
 def check_alerts():
     while True:
         with app.app_context():
             last = Measurement.query.order_by(Measurement.timestamp.desc()).first()
-            if last and last.temp > 28:
-                send_notification(f"🌡️ У будинку жарко: {last.temp}°C!\n"
-                                  f"Рекомендую увімкнути вентилятор для комфортної температури.")
+            if last:
+                alert = ""
+                if last.temp > 30: alert += f"Висока температура: {last.temp}°C! "
+                if last.hum > 70: alert += f"Висока вологість: {last.hum}%! "
+                if last.light < 200: alert += f"Низька освітленість: {last.light}! "
+
+                if alert:
+                    send_notification(f"⚠️ Сповіщення!\n{alert}\nЧас: {last.timestamp.strftime('%Y-%m-%d %H:%M:%S')}")
         time.sleep(60)
 
 threading.Thread(target=check_alerts, daemon=True).start()
 
-# Запуск polling бота
 def run_bot_polling():
     print("[Telegram] Бот запущено...")
     try:
@@ -74,11 +85,14 @@ send_notification("Розумний будинок онлайн 🏠\nНапиш
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    bot.reply_to(message, "Привіт! Я бот моніторингу розумного будинку 🏠\n"
+    bot.reply_to(message, "Привіт! Це бот моніторингу та керування розумним будинком 🏠\n"
                           "Команди:\n"
                           "/start — привітання\n"
                           "/status — останні дані\n"
-                          "/history — дані за період")
+                          "/history [дата] HH:MM HH:MM — графік за період\n"
+                          "Приклад: /history 15:00 16:00\n"
+                          "Або: /history 2025-03-01 10:00 12:00\n"
+                          "/led_on — увімкнути LED\n/led_off — вимкнути LED")
 
 @bot.message_handler(commands=['status'])
 def send_status(message):
@@ -100,16 +114,116 @@ def send_status(message):
 
 @bot.message_handler(commands=['history'])
 def send_history(message):
-    # ... (той самий хороший код з попереднього повідомлення, можу додати якщо потрібно)
-    bot.reply_to(message, "Функція /history тимчасово вимкнена. Скоро додаю повну підтримку.")
+    args = message.text.split()[1:]
+    if len(args) not in (2, 3):
+        bot.reply_to(message, "Формат:\n/history HH:MM HH:MM\nабо\n/history YYYY-MM-DD HH:MM HH:MM\nПриклад:\n/history 15:00 16:00\n/history 2025-03-01 10:00 12:00")
+        return
+
+    try:
+        if len(args) == 2:
+            date_str = datetime.now().strftime("%Y-%m-%d")
+            start_str, end_str = args
+        else:
+            date_str, start_str, end_str = args
+
+        start_dt = datetime.strptime(f"{date_str} {start_str}", "%Y-%m-%d %H:%M")
+        end_dt = datetime.strptime(f"{date_str} {end_str}", "%Y-%m-%d %H:%M")
+
+        with app.app_context():
+            records = Measurement.query.filter(
+                Measurement.timestamp >= start_dt,
+                Measurement.timestamp <= end_dt
+            ).order_by(Measurement.timestamp.asc()).all()
+
+            if not records:
+                bot.reply_to(message, f"За період {start_str}–{end_str} ({date_str}) даних немає")
+                return
+
+            # Малюємо графік
+            times = [r.timestamp for r in records]
+            temps = [r.temp for r in records]
+            hums = [r.hum for r in records]
+            lights = [r.light for r in records]
+
+            fig, ax1 = plt.subplots(figsize=(10, 6))
+
+            ax1.set_xlabel('Час')
+            ax1.set_ylabel('Температура (°C) / Вологість (%)', color='tab:blue')
+            ax1.plot(times, temps, color='tab:red', label='Температура', linewidth=2)
+            ax1.plot(times, hums, color='tab:blue', label='Вологість', linewidth=2)
+            ax1.tick_params(axis='y', labelcolor='tab:blue')
+            ax1.legend(loc='upper left')
+
+            ax2 = ax1.twinx()
+            ax2.set_ylabel('Освітленість (raw)', color='tab:orange')
+            ax2.plot(times, lights, color='tab:orange', label='Освітленість', linewidth=2)
+            ax2.tick_params(axis='y', labelcolor='tab:orange')
+            ax2.legend(loc='upper right')
+
+            fig.suptitle(f'Дані за період {date_str} {start_str}–{end_str}', fontsize=16)
+            fig.autofmt_xdate()
+            ax1.xaxis.set_major_formatter(DateFormatter('%H:%M'))
+
+            buf = io.BytesIO()
+            plt.savefig(buf, format='png', bbox_inches='tight')
+            buf.seek(0)
+            plt.close()
+
+            bot.send_photo(message.chat.id, buf, caption=f"Графік за {start_str}–{end_str} ({date_str})")
+
+    except ValueError:
+        bot.reply_to(message, "Неправильний формат! Приклад:\n/history 15:00 16:00\nабо /history 2025-03-01 10:00 12:00")
+
+@bot.message_handler(commands=['led_on', 'led_off'])
+def request_code(message):
+    command = message.text[1:]
+    user_id = message.from_user.id
+
+    if user_id != CHAT_ID:
+        bot.reply_to(message, "Доступ заборонено!")
+        return
+
+    user_state[user_id] = {'command': command, 'waiting_code': True}
+    bot.reply_to(message, "Введи секретний код:")
+
+@bot.message_handler(func=lambda m: True)
+def handle_message(message):
+    user_id = message.from_user.id
+
+    if user_id in user_state and user_state[user_id].get('waiting_code', False):
+        code = message.text.strip()
+        if code == SECRET_CODE:
+            command = user_state[user_id]['command']
+            url = ""
+
+            if command == 'led_on':
+                url = f"http://{ESP_IP}/led/on"
+                action = "увімкнено"
+            elif command == 'led_off':
+                url = f"http://{ESP_IP}/led/off"
+                action = "вимкнено"
+
+            try:
+                response = requests.get(url, timeout=5)
+                if response.status_code == 200:
+                    bot.reply_to(message, f"Світлодіод {action} успішно! 💡")
+                else:
+                    bot.reply_to(message, f"Помилка: {response.status_code}")
+            except Exception as e:
+                bot.reply_to(message, f"Не вдалося підключитися до ESP32: {str(e)}")
+
+            del user_state[user_id]
+        else:
+            bot.reply_to(message, "Неправильний код!")
+    else:
+        bot.reply_to(message, "Напиши /start, /status або /history")
 
 # ==================================================
-
 @app.route('/data', methods=['POST'])
 def receive_data():
     try:
         data = request.get_json(force=True)
-        print(f"Отримано від ESP32: {data}")
+        print(f"Отримано: {data}")
 
         m = Measurement(
             light=int(data.get('light', data.get('soil', 0))),
@@ -122,7 +236,6 @@ def receive_data():
         db.session.add(m)
         db.session.commit()
 
-        # === СПОВІЩЕННЯ ===
         if m.gas:
             send_notification("🚨 Виявлено газ/дим!\nВідчиніть вікно та викличіть 104!")
 
