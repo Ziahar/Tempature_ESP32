@@ -53,7 +53,7 @@ def send_notification(message):
     except Exception as e:
         print(f"[Telegram] Помилка: {e}")
 
-# Фонова перевірка
+# Фонова перевірка 
 def check_alerts():
     while True:
         with app.app_context():
