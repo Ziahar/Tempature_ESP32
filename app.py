@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify, render_template
 from flask_sqlalchemy import SQLAlchemy
-from datetime import datetime
+from datetime import datetime, time
 import telebot
 import threading
 import time
@@ -50,7 +50,7 @@ def send_notification(message):
     except Exception as e:
         print(f"[Telegram] Помилка: {e}")
 
-# Фонова перевірка небезпечних значень
+# Фонова перевірка небезпечних значень (без PIR)
 def check_alerts():
     while True:
         with app.app_context():
@@ -62,8 +62,7 @@ def check_alerts():
                                       f"Рекомендую увімкнути вентилятор для комфортної температури.")
                 if last.gas:
                     send_notification("🚨 Виявлено газ/дим!\nВідчиніть вікно та викличіть 104!")
-                if last.motion:
-                    send_notification("🚨 Небезпека вторгнення!\nPIR-датчик спрацював!")
+
         time.sleep(60)
 
 threading.Thread(target=check_alerts, daemon=True).start()
@@ -85,9 +84,9 @@ send_notification("Розумний будинок онлайн 🏠\nНапиш
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     bot.reply_to(message, "Привіт! Це бот моніторингу розумного будинку 🏠\n"
-                          "Я надсилаю сповіщення про небезпеку (газ, рух, температура).\n\n"
+                          "Я надсилаю сповіщення про температуру та газ/дим.\n\n"
                           "Команди:\n"
-                          "/start — це привітання\n"
+                          "/start — привітання\n"
                           "/status — останні дані\n"
                           "/history [дата] HH:MM HH:MM — графік за період\n"
                           "Приклад:\n/history 15:00 16:00\n/history 2025-03-01 10:00 12:00")
@@ -193,11 +192,9 @@ def receive_data():
         db.session.add(m)
         db.session.commit()
 
+        # Миттєві сповіщення (без PIR)
         if m.gas:
             send_notification("🚨 Виявлено газ/дим!\nВідчиніть вікно та викличіть 104!")
-
-        if m.motion:
-            send_notification("🚨 Небезпека вторгнення!\nPIR-датчик спрацював!")
 
         if m.temp > 28:
             send_notification(f"🌡️ У будинку жарко: {m.temp}°C!\n"
