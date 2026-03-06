@@ -1,7 +1,6 @@
 from flask import Flask, request, jsonify, render_template
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
-from datetime import datetime
+from flask_sqlalchemy import SQLAlchemy
+from datetime import datetime, time
 import telebot
 import threading
 import time
@@ -9,20 +8,36 @@ import matplotlib.pyplot as plt
 import io
 from matplotlib.dates import DateFormatter
 from zoneinfo import ZoneInfo
-import os
 
 app = Flask(__name__)
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///data.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-# === GOOGLE SHEETS ===
-SCOPE = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-CREDS_FILE = "smart-house.json"  # завантаж цей файл у корінь проєкту на GitHub
+db = SQLAlchemy(app)
 
-creds = ServiceAccountCredentials.from_json_keyfile_name(CREDS_FILE, SCOPE)
-client = gspread.authorize(creds)
-SHEET_ID = "1iTxnmPncCOAaZVBTBQL_fVj7ODgFVSZ8WzorefUui88"  # заміни
-sheet = client.open_by_key(SHEET_ID).sheet1
+class Measurement(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow, index=True)
+    light = db.Column(db.Integer, nullable=False)
+    temp = db.Column(db.Float, nullable=False)
+    hum = db.Column(db.Float, nullable=False)
+    motion = db.Column(db.Boolean, default=False)
+    gas = db.Column(db.Boolean, default=False)
 
-# === TELEGRAM БОТ ===
+    def to_dict(self):
+        return {
+            "timestamp": self.timestamp.strftime('%Y-%m-%d %H:%M:%S'),
+            "light": self.light,
+            "temp": round(self.temp, 1),
+            "hum": round(self.hum, 1),
+            "motion": self.motion,
+            "gas": self.gas
+        }
+
+with app.app_context():
+    db.create_all()
+
+# === НАЛАШТУВАННЯ TELEGRAM БОТА ===
 TELEGRAM_TOKEN = '8561971309:AAG7dKvFlGYO5weT42p9OBdCD5ZkbyL2daQ'
 CHAT_ID = 1481541168
 
@@ -35,27 +50,24 @@ def send_notification(message):
     except Exception as e:
         print(f"[Telegram] Помилка: {e}")
 
-# Фонова перевірка
+# Фонова перевірка небезпечних значень (без PIR)
 def check_alerts():
     while True:
-        # Отримуємо останній рядок з Google Sheets
-        rows = sheet.get_all_values()
-        if len(rows) > 1:
-            last = rows[-1]
-            temp = float(last[3]) if last[3] else 0
-            hum = float(last[4]) if last[4] else 0
-            light = int(last[5]) if last[5] else 0
-            gas = last[7] == "Так"
+        with app.app_context():
+            last = Measurement.query.order_by(Measurement.timestamp.desc()).first()
+            if last:
+                alert = ""
+                if last.temp > 28:
+                    send_notification(f"🌡️ У будинку жарко: {last.temp}°C!\n"
+                                      f"Рекомендую увімкнути вентилятор для комфортної температури.")
+                if last.gas:
+                    send_notification("🚨 Виявлено газ/дим!\nВідчиніть вікно та викличіть 104!")
 
-            if temp > 28:
-                send_notification(f"🌡️ У будинку жарко: {temp}°C!\nРекомендую увімкнути вентилятор.")
-            if gas:
-                send_notification("🚨 Виявлено газ/дим!\nВідчиніть вікно та викличіть 104!")
         time.sleep(60)
 
 threading.Thread(target=check_alerts, daemon=True).start()
 
-# Polling бота
+# Запуск polling бота
 def run_bot_polling():
     print("[Telegram] Бот запущено...")
     try:
@@ -67,33 +79,100 @@ threading.Thread(target=run_bot_polling, daemon=True).start()
 
 send_notification("Розумний будинок онлайн 🏠\nНапиши /start")
 
-# Команди бота (без змін, тільки /start, /status, /history)
+# ==================== КОМАНДИ БОТА ====================
+
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     bot.reply_to(message, "Привіт! Це бот моніторингу розумного будинку 🏠\n"
-                          "Команди:\n/start — привітання\n/status — останні дані\n/history HH:MM HH:MM — графік за період")
+                          "Я надсилаю сповіщення про температуру та газ/дим.\n\n"
+                          "Команди:\n"
+                          "/start — привітання\n"
+                          "/status — останні дані\n"
+                          "/history [дата] HH:MM HH:MM — графік за період\n"
+                          "Приклад:\n/history 15:00 16:00\n/history 2025-03-01 10:00 12:00")
 
 @bot.message_handler(commands=['status'])
 def send_status(message):
-    rows = sheet.get_all_values()
-    if len(rows) > 1:
-        last = rows[-1]
-        reply = (
-            f"Останні дані:\n\n"
-            f"🌡️ Температура: {last[3]} °C\n"
-            f"💧 Вологість: {last[4]} %\n"
-            f"☀️ Освітленість: {last[5]}\n"
-            f"🔥 Газ: {last[7]}\n"
-            f"🕒 {last[1]} {last[2]}"
-        )
-        bot.reply_to(message, reply)
-    else:
-        bot.reply_to(message, "Даних ще немає 😔")
+    with app.app_context():
+        last = Measurement.query.order_by(Measurement.timestamp.desc()).first()
+        if last:
+            reply = (
+                f"Останні дані:\n\n"
+                f"🌡️ Температура: {last.temp} °C\n"
+                f"💧 Вологість: {last.hum} %\n"
+                f"☀️ Освітленість: {last.light}\n"
+                f"🔥 Газ: {'Так' if last.gas else 'Ні'}\n"
+                f"🚶 Рух: {'Так' if last.motion else 'Ні'}\n"
+                f"🕒 {last.timestamp.strftime('%Y-%m-%d %H:%M:%S')}"
+            )
+            bot.reply_to(message, reply)
+        else:
+            bot.reply_to(message, "Даних ще немає 😔")
 
-# /history — графік за період (тут тільки текстовий список, якщо хочеш графік — скажи, додамо)
 @bot.message_handler(commands=['history'])
 def send_history(message):
-    bot.reply_to(message, "Функція /history тимчасово в текстовому режимі.\nСкоро додаю графіки!")
+    args = message.text.split()[1:]
+    if len(args) not in (2, 3):
+        bot.reply_to(message, "Формат:\n/history HH:MM HH:MM\nабо\n/history YYYY-MM-DD HH:MM HH:MM\nПриклад:\n/history 15:00 16:00")
+        return
+
+    try:
+        if len(args) == 2:
+            date_str = datetime.now(ZoneInfo("Europe/Kyiv")).strftime("%Y-%m-%d")
+            start_str, end_str = args
+        else:
+            date_str, start_str, end_str = args
+
+        start_dt = datetime.strptime(f"{date_str} {start_str}", "%Y-%m-%d %H:%M").replace(tzinfo=ZoneInfo("Europe/Kyiv")).astimezone(datetime.utcnow().tzinfo or None)
+        end_dt = datetime.strptime(f"{date_str} {end_str}", "%Y-%m-%d %H:%M").replace(tzinfo=ZoneInfo("Europe/Kyiv")).astimezone(datetime.utcnow().tzinfo or None)
+
+        with app.app_context():
+            records = Measurement.query.filter(
+                Measurement.timestamp >= start_dt,
+                Measurement.timestamp <= end_dt
+            ).order_by(Measurement.timestamp.asc()).all()
+
+            if not records:
+                bot.reply_to(message, f"За період {start_str}–{end_str} ({date_str}) даних немає")
+                return
+
+            # Малюємо графік
+            times = [r.timestamp for r in records]
+            temps = [r.temp for r in records]
+            hums = [r.hum for r in records]
+            lights = [r.light for r in records]
+
+            fig, ax1 = plt.subplots(figsize=(12, 7))
+
+            ax1.set_xlabel('Час (локальний)', fontsize=12)
+            ax1.set_ylabel('Температура (°C) / Вологість (%)', color='tab:blue', fontsize=12)
+            ax1.plot(times, temps, color='tab:red', label='Температура', linewidth=2.5)
+            ax1.plot(times, hums, color='tab:blue', label='Вологість', linewidth=2.5)
+            ax1.tick_params(axis='y', labelcolor='tab:blue')
+            ax1.legend(loc='upper left', fontsize=10)
+
+            ax2 = ax1.twinx()
+            ax2.set_ylabel('Освітленість (raw)', color='tab:orange', fontsize=12)
+            ax2.plot(times, lights, color='tab:orange', label='Освітленість', linewidth=2.5)
+            ax2.tick_params(axis='y', labelcolor='tab:orange')
+            ax2.legend(loc='upper right', fontsize=10)
+
+            fig.suptitle(f'Дані за період {date_str} {start_str} – {end_str}', fontsize=16, y=0.98)
+            fig.autofmt_xdate()
+            ax1.xaxis.set_major_formatter(DateFormatter('%H:%M'))
+            plt.tight_layout()
+
+            buf = io.BytesIO()
+            plt.savefig(buf, format='png', dpi=150, bbox_inches='tight')
+            buf.seek(0)
+            plt.close()
+
+            bot.send_photo(message.chat.id, buf, caption=f"Графік за {date_str} {start_str} – {end_str}")
+
+    except ValueError:
+        bot.reply_to(message, "Неправильний формат дати/часу!\nПриклад:\n/history 15:00 16:00\n/history 2025-03-01 10:00 12:00")
+    except Exception as e:
+        bot.reply_to(message, f"Помилка: {str(e)}")
 
 # ==================================================
 @app.route('/data', methods=['POST'])
@@ -102,31 +181,24 @@ def receive_data():
         data = request.get_json(force=True)
         print(f"Отримано: {data}")
 
-        timestamp = datetime.now().strftime('%Y-%m-%d')
-        time_str = datetime.now().strftime('%H:%M:%S')
+        m = Measurement(
+            light=int(data.get('light', data.get('soil', 0))),
+            temp=float(data['temp']),
+            hum=float(data['hum']),
+            motion=bool(data.get('motion', False)),
+            gas=bool(data.get('gas', False))
+        )
 
-        row = [
-            len(sheet.get_all_values()),  # ID
-            timestamp,                    # Дата
-            time_str,                     # Час
-            data.get('temp', 0),
-            data.get('hum', 0),
-            data.get('light', 0),
-            data.get('motion', False),
-            "Так" if data.get('gas', False) else "Ні"
-        ]
+        db.session.add(m)
+        db.session.commit()
 
-        sheet.append_row(row)
-
-        # Сповіщення
-        temp = float(data.get('temp', 0))
-        gas = data.get('gas', False)
-
-        if temp > 28:
-            send_notification(f"🌡️ У будинку жарко: {temp}°C!\nРекомендую увімкнути вентилятор.")
-
-        if gas:
+        # Миттєві сповіщення (без PIR)
+        if m.gas:
             send_notification("🚨 Виявлено газ/дим!\nВідчиніть вікно та викличіть 104!")
+
+        if m.temp > 28:
+            send_notification(f"🌡️ У будинку жарко: {m.temp}°C!\n"
+                              f"Рекомендую увімкнути вентилятор для комфортної температури.")
 
         return jsonify({"status": "ok"}), 200
 
@@ -140,17 +212,10 @@ def index():
 
 @app.route('/api/data')
 def api_data():
-    rows = sheet.get_all_values()[1:]  # без заголовків
-    data = []
-    for row in rows:
-        if len(row) >= 6:
-            data.append({
-                "timestamp": f"{row[1]} {row[2]}",
-                "light": int(row[5]),
-                "temp": float(row[3]),
-                "hum": float(row[4])
-            })
-    return jsonify(data)
+    limit = request.args.get('limit', 1000, type=int)
+    measurements = Measurement.query.order_by(Measurement.timestamp.desc()).limit(limit).all()
+    measurements.reverse()
+    return jsonify([m.to_dict() for m in measurements])
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
