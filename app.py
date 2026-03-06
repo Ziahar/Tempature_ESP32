@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify, render_template
 from flask_sqlalchemy import SQLAlchemy
-from datetime import datetime, time
+from datetime import datetime
 import telebot
 import threading
 import time
@@ -8,10 +8,13 @@ import matplotlib.pyplot as plt
 import io
 from matplotlib.dates import DateFormatter
 from zoneinfo import ZoneInfo
+
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///data.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
 db = SQLAlchemy(app)
+
 class Measurement(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     timestamp = db.Column(db.DateTime, default=datetime.utcnow, index=True)
@@ -20,6 +23,7 @@ class Measurement(db.Model):
     hum = db.Column(db.Float, nullable=False)
     motion = db.Column(db.Boolean, default=False)
     gas = db.Column(db.Boolean, default=False)
+
     def to_dict(self):
         return {
             "timestamp": self.timestamp.strftime('%Y-%m-%d %H:%M:%S'),
@@ -29,19 +33,24 @@ class Measurement(db.Model):
             "motion": self.motion,
             "gas": self.gas
         }
+
 with app.app_context():
     db.create_all()
+
 # === НАЛАШТУВАННЯ TELEGRAM БОТА ===
 TELEGRAM_TOKEN = '8561971309:AAG7dKvFlGYO5weT42p9OBdCD5ZkbyL2daQ'
 CHAT_ID = 1481541168
+
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
+
 def send_notification(message):
     try:
         bot.send_message(CHAT_ID, message)
         print(f"[Telegram] Надіслано: {message}")
     except Exception as e:
         print(f"[Telegram] Помилка: {e}")
-# Фонова перевірка небезпечних значень (без PIR)
+
+# Фонова перевірка небезпечних значень
 def check_alerts():
     while True:
         with app.app_context():
@@ -54,7 +63,9 @@ def check_alerts():
                 if last.gas:
                     send_notification("🚨 Виявлено газ/дим!\nВідчиніть вікно та викличіть 104!")
         time.sleep(60)
+
 threading.Thread(target=check_alerts, daemon=True).start()
+
 # Запуск polling бота
 def run_bot_polling():
     print("[Telegram] Бот запущено...")
@@ -62,15 +73,23 @@ def run_bot_polling():
         bot.polling(none_stop=True, interval=0, timeout=30)
     except Exception as e:
         print(f"[Telegram] Polling помилка: {e}")
+
 threading.Thread(target=run_bot_polling, daemon=True).start()
+
 send_notification("Розумний будинок онлайн 🏠\nНапиши /start")
+
 # ==================== КОМАНДИ БОТА ====================
+
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     bot.reply_to(message, "Привіт! Це бот моніторингу розумного будинку 🏠\n"
-                          "Я надсилаю сповіщення про небезпеку та дозволяю керувати пристроями.\n"
-                          "Команди:\n/start — привітання\n/status — останні дані\n/led_on — увімкнути LED\n/led_off — вимкнути LED\n/history [дата] HH:MM HH:MM — графік за період\n"
+                          "Я надсилаю сповіщення про температуру та газ/дим.\n\n"
+                          "Команди:\n"
+                          "/start — привітання\n"
+                          "/status — останні дані\n"
+                          "/history [дата] HH:MM HH:MM — графік за період\n"
                           "Приклад:\n/history 15:00 16:00\n/history 2025-03-01 10:00 12:00")
+
 @bot.message_handler(commands=['status'])
 def send_status(message):
     with app.app_context():
@@ -89,30 +108,7 @@ def send_status(message):
         else:
             bot.reply_to(message, "Ще немає даних у базі 😔\n"
                                   "Зачекай, поки датчики надішлють перші показники.")
-@bot.message_handler(commands=['led_on', 'led_off'])
-def request_code(message):
-    command = message.text[1:]  # led_on або led_off
-    user_id = message.from_user.id
-    user_state[user_id] = {'command': command, 'waiting_code': True}
-    bot.reply_to(message, "Для керування розумним будинком введи секретний код (4 цифри):")
-@bot.message_handler(func=lambda m: True)
-def handle_message(message):
-    user_id = message.from_user.id
-    if user_id in user_state and user_state[user_id].get('waiting_code', False):
-        code = message.text.strip()
-        if code == SECRET_CODE:
-            command = user_state[user_id]['command']
-            if command == 'led_on':
-                # Тут код керування LED ON (якщо є API або симуляція)
-                bot.reply_to(message, "LED увімкнено! 💡 Розумний будинок під контролем.")
-            elif command == 'led_off':
-                bot.reply_to(message, "LED вимкнено! 🔌 Розумний будинок під контролем.")
-            del user_state[user_id]  # Очистити стан
-        else:
-            bot.reply_to(message, "Неправильний код! Спробуй ще раз або /start для початку.")
-    else:
-        bot.reply_to(message, "Я отримав твоє повідомлення, але поки вмію тільки команди:\n"
-                              "/start — привітання\n/status — дані\n/led_on — увімкнути LED\n/led_off — вимкнути LED")
+
 @bot.message_handler(commands=['history'])
 def send_history(message):
     args = message.text.split()[1:]
@@ -125,8 +121,8 @@ def send_history(message):
             start_str, end_str = args
         else:
             date_str, start_str, end_str = args
-        start_dt = datetime.strptime(f"{date_str} {start_str}", "%Y-%m-%d %H:%M").replace(tzinfo=ZoneInfo("Europe/Kyiv")).astimezone(datetime.utcnow().tzinfo or None)
-        end_dt = datetime.strptime(f"{date_str} {end_str}", "%Y-%m-%d %H:%M").replace(tzinfo=ZoneInfo("Europe/Kyiv")).astimezone(datetime.utcnow().tzinfo or None)
+        start_dt = datetime.strptime(f"{date_str} {start_str}", "%Y-%m-%d %H:%M").replace(tzinfo=ZoneInfo("Europe/Kyiv"))
+        end_dt = datetime.strptime(f"{date_str} {end_str}", "%Y-%m-%d %H:%M").replace(tzinfo=ZoneInfo("Europe/Kyiv"))
         with app.app_context():
             records = Measurement.query.filter(
                 Measurement.timestamp >= start_dt,
@@ -165,6 +161,7 @@ def send_history(message):
         bot.reply_to(message, "Неправильний формат дати/часу!\nПриклад:\n/history 15:00 16:00\n/history 2025-03-01 10:00 12:00")
     except Exception as e:
         bot.reply_to(message, f"Помилка: {str(e)}")
+
 # ==================================================
 @app.route('/data', methods=['POST'])
 def receive_data():
@@ -190,14 +187,17 @@ def receive_data():
     except Exception as e:
         print(f"Помилка: {e}")
         return jsonify({"error": str(e)}), 400
+
 @app.route('/')
 def index():
     return render_template('index.html')
+
 @app.route('/api/data')
 def api_data():
     limit = request.args.get('limit', 1000, type=int)
     measurements = Measurement.query.order_by(Measurement.timestamp.desc()).limit(limit).all()
     measurements.reverse()
     return jsonify([m.to_dict() for m in measurements])
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
