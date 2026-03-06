@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify, render_template
 from flask_sqlalchemy import SQLAlchemy
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 import telebot
 import threading
 import time
@@ -42,6 +42,8 @@ TELEGRAM_TOKEN = '8561971309:AAG7dKvFlGYO5weT42p9OBdCD5ZkbyL2daQ'
 CHAT_ID = 1481541168
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
+
+KYIV_TZ = ZoneInfo("Europe/Kyiv")
 
 def send_notification(message):
     try:
@@ -89,13 +91,14 @@ def send_welcome(message):
                           "/status — останні дані\n"
                           "/day [дата] — графік за весь день\n"
                           "/history [дата] HH:MM HH:MM — графік за період\n\n"
-                          "Приклади:\n/day 2026-03-06\n/day (за сьогодні)\n/history 15:00 16:00")
+                          "Приклади:\n/day\n/day 2026-03-06\n/history 15:00 16:00")
 
 @bot.message_handler(commands=['status'])
 def send_status(message):
     with app.app_context():
         last = Measurement.query.order_by(Measurement.timestamp.desc()).first()
         if last:
+            local_time = last.timestamp.astimezone(KYIV_TZ)
             reply = (
                 f"Останні дані з датчиків:\n\n"
                 f"🌡️ Температура: {last.temp} °C\n"
@@ -103,7 +106,7 @@ def send_status(message):
                 f"☀️ Освітленість: {last.light} (raw)\n"
                 f"🔥 Газ: {'Так' if last.gas else 'Ні'}\n"
                 f"🚶 Рух: {'Так' if last.motion else 'Ні'}\n"
-                f"🕒 Час: {last.timestamp.strftime('%Y-%m-%d %H:%M:%S')}"
+                f"🕒 Час (Київ): {local_time.strftime('%Y-%m-%d %H:%M:%S')}"
             )
             bot.reply_to(message, reply)
         else:
@@ -124,8 +127,8 @@ def send_day(message):
             target_date = today
             date_str = today.strftime("%Y-%m-%d")
 
-        start_dt = datetime.combine(target_date, time(0, 0, 0), tzinfo=kyiv_tz)
-        end_dt   = datetime.combine(target_date, time(23, 59, 59), tzinfo=kyiv_tz)
+        start_dt = datetime.combine(target_date, time.min, tzinfo=kyiv_tz)
+        end_dt   = datetime.combine(target_date, time.max, tzinfo=kyiv_tz)
 
         start_utc = start_dt.astimezone(ZoneInfo("UTC"))
         end_utc   = end_dt.astimezone(ZoneInfo("UTC"))
