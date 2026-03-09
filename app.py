@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify, render_template
 from flask_sqlalchemy import SQLAlchemy
-from datetime import datetime
+from datetime import datetime, timedelta, time
 import telebot
 import threading
 import time
@@ -44,6 +44,7 @@ CHAT_ID = 1481541168
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
+UTC_TZ = ZoneInfo("UTC")
 
 def send_notification(message):
     try:
@@ -135,8 +136,8 @@ def send_history(message):
         start_dt = datetime.strptime(start_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=kyiv_tz)
         end_dt   = datetime.strptime(end_str,   "%Y-%m-%d %H:%M:%S").replace(tzinfo=kyiv_tz)
 
-        start_utc = start_dt.astimezone(ZoneInfo("UTC"))
-        end_utc   = end_dt.astimezone(ZoneInfo("UTC"))
+        start_utc = start_dt.astimezone(UTC_TZ)
+        end_utc   = end_dt.astimezone(UTC_TZ)
 
         with app.app_context():
             records = Measurement.query.filter(
@@ -148,6 +149,7 @@ def send_history(message):
                 bot.reply_to(message, f"За період {start_str.split()[-1]}–{end_str.split()[-1]} ({date_str}) даних немає.")
                 return
 
+            # Коректне перетворення часу в київський пояс
             times = [r.timestamp.astimezone(kyiv_tz) for r in records]
             temps = [r.temp for r in records]
             hums  = [r.hum for r in records]
