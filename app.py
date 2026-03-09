@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify, render_template
 from flask_sqlalchemy import SQLAlchemy
-from datetime import datetime, timedelta, time
+from datetime import datetime
 import telebot
 import threading
 import time
@@ -89,9 +89,8 @@ def send_welcome(message):
                           "Команди:\n"
                           "/start — привітання\n"
                           "/status — останні дані\n"
-                          "/day [дата] — графік за весь день\n"
                           "/history [дата] HH:MM HH:MM — графік за період\n\n"
-                          "Приклади:\n/day\n/day 2026-03-06\n/history 15:00 16:00")
+                          "Приклади:\n/history 15:00 16:00\n/history 2025-03-01 10:00 12:00")
 
 @bot.message_handler(commands=['status'])
 def send_status(message):
@@ -112,73 +111,6 @@ def send_status(message):
         else:
             bot.reply_to(message, "Ще немає даних у базі 😔\n"
                                   "Зачекай, поки датчики надішлють перші показники.")
-
-@bot.message_handler(commands=['day'])
-def send_day(message):
-    args = message.text.split()[1:]
-    kyiv_tz = ZoneInfo("Europe/Kyiv")
-    today = datetime.now(kyiv_tz).date()
-
-    try:
-        if args:
-            date_str = args[0]
-            target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
-        else:
-            target_date = today
-            date_str = today.strftime("%Y-%m-%d")
-
-        start_dt = datetime.combine(target_date, time.min, tzinfo=kyiv_tz)
-        end_dt   = datetime.combine(target_date, time.max, tzinfo=kyiv_tz)
-
-        start_utc = start_dt.astimezone(ZoneInfo("UTC"))
-        end_utc   = end_dt.astimezone(ZoneInfo("UTC"))
-
-        with app.app_context():
-            records = Measurement.query.filter(
-                Measurement.timestamp >= start_utc,
-                Measurement.timestamp <= end_utc
-            ).order_by(Measurement.timestamp.asc()).all()
-
-            if not records:
-                bot.reply_to(message, f"За день {date_str} даних немає.\n"
-                                      f"Перевір, чи були вимірювання в цей день.")
-                return
-
-            times = [r.timestamp.astimezone(kyiv_tz) for r in records]
-            temps = [r.temp for r in records]
-            hums  = [r.hum  for r in records]
-            lights = [r.light for r in records]
-
-            fig, ax1 = plt.subplots(figsize=(12, 7))
-            ax1.set_xlabel('Час (Київ)', fontsize=12)
-            ax1.set_ylabel('Температура (°C) / Вологість (%)', color='tab:blue', fontsize=12)
-            ax1.plot(times, temps, color='tab:red', label='Температура', linewidth=2.5)
-            ax1.plot(times, hums, color='tab:blue', label='Вологість', linewidth=2.5)
-            ax1.tick_params(axis='y', labelcolor='tab:blue')
-            ax1.legend(loc='upper left', fontsize=10)
-
-            ax2 = ax1.twinx()
-            ax2.set_ylabel('Освітленість (raw)', color='tab:orange', fontsize=12)
-            ax2.plot(times, lights, color='tab:orange', label='Освітленість', linewidth=2.5)
-            ax2.tick_params(axis='y', labelcolor='tab:orange')
-            ax2.legend(loc='upper right', fontsize=10)
-
-            fig.suptitle(f'Дані за весь день {date_str}', fontsize=16, y=0.98)
-            fig.autofmt_xdate()
-            ax1.xaxis.set_major_formatter(DateFormatter('%H:%M'))
-            plt.tight_layout()
-
-            buf = io.BytesIO()
-            plt.savefig(buf, format='png', dpi=150, bbox_inches='tight')
-            buf.seek(0)
-            plt.close(fig)
-
-            bot.send_photo(message.chat.id, buf, caption=f"Графік за весь день {date_str}")
-
-    except ValueError:
-        bot.reply_to(message, "Неправильний формат дати! Приклад:\n/day 2026-03-06\nабо просто /day (за сьогодні)")
-    except Exception as e:
-        bot.reply_to(message, f"Помилка: {str(e)}")
 
 @bot.message_handler(commands=['history'])
 def send_history(message):
